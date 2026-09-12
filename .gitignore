@@ -14,3 +14,17 @@ alerts/
 
 # Backend runtime database
 03_backend_database/database/
+
+# Training dataset
+02_dataset_model_training/dataset/
+02_dataset_model_training/fast_dataset/
+
+# Training outputs
+02_dataset_model_training/training/runs/
+
+# Model weights
+*.pt
+# Training dataset
+02_dataset_model_training/dataset/
+02_dataset_model_training/training/runs/
+*.pt

@@ -1,8 +1,13 @@
-path: ../dataset
+path: C:/Users/shrim/OneDrive/Desktop/urban_sensing_platform/02_dataset_model_training/dataset
 
 train: images/train
 val: images/val
 test: images/test
 
 names:
-  0: pothole
+  0: HMV
+  1: LMV
+  2: Pedestrian
+  3: RoadDamages
+  4: SpeedBump
+  5: UnsurfacedRoad
