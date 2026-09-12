@@ -7,3 +7,10 @@ extracted_frames/
 alerts/
 
 .env
+
+# Frontend
+04_dashboard_frontend/node_modules/
+04_dashboard_frontend/dist/
+
+# Backend runtime database
+03_backend_database/database/
