@@ -28,3 +28,4 @@ alerts/
 02_dataset_model_training/dataset/
 02_dataset_model_training/training/runs/
 *.pt
+*.zip
