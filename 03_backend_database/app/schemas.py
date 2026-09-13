@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 
 
 class AlertCreate(BaseModel):
-    event_type: str = "pothole"
+
+    event_type: str
 
     confidence: float = Field(
         ge=0.0,
@@ -13,6 +14,7 @@ class AlertCreate(BaseModel):
     )
 
     latitude: Optional[float] = None
+
     longitude: Optional[float] = None
 
     severity: str = "medium"
@@ -27,8 +29,11 @@ class AlertCreate(BaseModel):
 
 
 class AlertResponse(AlertCreate):
+
     id: int
+
     status: str
+
     timestamp: datetime
 
     class Config:
