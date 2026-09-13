@@ -4,6 +4,7 @@ import sys
 import time
 import requests
 
+
 # ============================================================
 # PATHS
 # ============================================================
@@ -18,6 +19,8 @@ sys.path.append(BASE_DIR)
 
 from scripts.detector import RoadDetector
 from scripts.alert_manager import AlertManager
+from traffic_intelligence import TrafficIntelligence
+
 
 GPS_DIR = os.path.abspath(
     os.path.join(
@@ -61,22 +64,26 @@ BACKEND_URL = (
 
 BUS_ID = "BMTC-DEMO-01"
 
-# AI checks every 3rd frame
+
+# ============================================================
+# AI SETTINGS
+# ============================================================
+
+# AI inference happens every 3rd frame.
 AI_FRAME_INTERVAL = 3
 
-# CPU-friendly inference size
+# CPU-friendly inference size.
 AI_IMAGE_SIZE = 416
 
-# ------------------------------------------------------------
+
+# ============================================================
 # PLAYBACK SPEED
-#
+# ============================================================
+
 # 1.00 = original speed
 # 0.90 = slightly slow
-# 0.80 = medium slow  <-- CURRENT
+# 0.80 = medium slow
 # 0.70 = noticeably slow
-#
-# We use 0.80 because you asked for medium flow.
-# ------------------------------------------------------------
 
 PLAYBACK_SPEED = 0.80
 
@@ -196,7 +203,15 @@ def send_alert(
 
     try:
 
+        # ----------------------------------------------------
+        # GPS
+        # ----------------------------------------------------
+
         location = gps.move()
+
+        # ----------------------------------------------------
+        # Event metadata
+        # ----------------------------------------------------
 
         event = {
             "event_type": alert["event_type"],
@@ -239,6 +254,10 @@ def send_alert(
             )
         )
 
+        # ----------------------------------------------------
+        # Severity
+        # ----------------------------------------------------
+
         severity = (
             priority_engine.severity(
                 alert["event_type"],
@@ -264,6 +283,68 @@ def send_alert(
             )
         }
 
+        # ----------------------------------------------------
+        # Extra traffic information
+        #
+        # The current backend schema does not have dedicated
+        # fields for these values, so they are printed locally.
+        # The actual alert still goes through the same backend.
+        # ----------------------------------------------------
+
+        if alert["event_type"] == "traffic":
+
+            print(
+                "\n"
+                "------------------------------------------"
+            )
+
+            print(
+                "TRAFFIC INTELLIGENCE ALERT"
+            )
+
+            print(
+                f"Traffic Index : "
+                f"{alert.get('traffic_index', 0)}"
+            )
+
+            print(
+                f"Traffic Level : "
+                f"{alert.get('traffic_level', 'high')}"
+            )
+
+            print(
+                f"Vehicles      : "
+                f"{alert.get('vehicle_count', 0)}"
+            )
+
+            print(
+                f"Pedestrians   : "
+                f"{alert.get('pedestrian_count', 0)}"
+            )
+
+            print(
+                f"Confidence    : "
+                f"{alert['confidence']:.2f}"
+            )
+
+            print(
+                f"Severity      : "
+                f"{severity}"
+            )
+
+            print(
+                f"Bus           : "
+                f"{BUS_ID}"
+            )
+
+            print(
+                "------------------------------------------"
+            )
+
+        # ----------------------------------------------------
+        # Send to FastAPI
+        # ----------------------------------------------------
+
         response = requests.post(
             BACKEND_URL,
             json=payload,
@@ -281,6 +362,13 @@ def send_alert(
                 f"confidence="
                 f"{alert['confidence']:.2f} | "
                 f"priority={priority}"
+            )
+
+        else:
+
+            print(
+                f"[BACKEND ERROR] "
+                f"HTTP {response.status_code}"
             )
 
     except Exception as e:
@@ -312,18 +400,46 @@ def main():
         imgsz=AI_IMAGE_SIZE
     )
 
+    # --------------------------------------------------------
+    # Normal event alert manager
+    # --------------------------------------------------------
+
     alert_manager = AlertManager(
         required_detections=2,
         cooldown_seconds=8,
         persistence_window=5
     )
 
+    # --------------------------------------------------------
+    # Traffic intelligence engine
+    # --------------------------------------------------------
+
+    traffic_engine = TrafficIntelligence(
+        congestion_index_threshold=60,
+        congestion_vehicle_threshold=6,
+        required_observations=3,
+        persistence_window=6,
+        cooldown_seconds=15
+    )
+
+    # --------------------------------------------------------
+    # GPS
+    # --------------------------------------------------------
+
     gps = GPSSimulator(
         start_lat=12.9716,
         start_lon=77.5946
     )
 
+    # --------------------------------------------------------
+    # Priority engine
+    # --------------------------------------------------------
+
     priority_engine = PriorityEngine()
+
+    # --------------------------------------------------------
+    # Multi-bus validation
+    # --------------------------------------------------------
 
     multi_bus_validator = (
         MultiBusValidator(
@@ -373,6 +489,7 @@ def main():
     )
 
     print("\nVideo:")
+
     print(
         f"Original FPS : {fps:.2f}"
     )
@@ -392,15 +509,11 @@ def main():
     # ========================================================
     # IN-MEMORY PROCESSED VIDEO
     # ========================================================
-    #
-    # IMPORTANT:
-    #
+
     # Nothing is written to disk.
     #
-    # Each frame remains temporarily in RAM together with
-    # ONLY the detections belonging to that exact frame.
-    #
-    # ========================================================
+    # Frames temporarily remain in RAM together with
+    # the detections belonging to that exact frame.
 
     processed_video = []
 
@@ -409,6 +522,8 @@ def main():
     total_detections = 0
 
     total_alerts = 0
+
+    total_traffic_alerts = 0
 
     # ========================================================
     # PASS 1
@@ -459,11 +574,140 @@ def main():
                 len(detections)
             )
 
-            # ------------------------------------------------
-            # Alert generation
-            # ------------------------------------------------
+            # =================================================
+            # TRAFFIC INTELLIGENCE
+            # =================================================
+
+            traffic_result = (
+                traffic_engine.analyze(
+                    detections
+                )
+            )
+
+            vehicle_count = (
+                traffic_result[
+                    "vehicle_count"
+                ]
+            )
+
+            pedestrian_count = (
+                traffic_result[
+                    "pedestrian_count"
+                ]
+            )
+
+            traffic_index = (
+                traffic_result[
+                    "traffic_index"
+                ]
+            )
+
+            traffic_level = (
+                traffic_result[
+                    "traffic_level"
+                ]
+            )
+
+            congestion_confirmed = (
+                traffic_result[
+                    "congestion_confirmed"
+                ]
+            )
+
+            # -------------------------------------------------
+            # Terminal traffic status
+            # -------------------------------------------------
+
+            print(
+                f"\r"
+                f"[TRAFFIC] "
+                f"Vehicles={vehicle_count} "
+                f"Pedestrians={pedestrian_count} "
+                f"Index={traffic_index} "
+                f"Level={traffic_level}",
+                end="",
+                flush=True
+            )
+
+            # =================================================
+            # CONGESTION ALERT
+            # =================================================
+
+            traffic_alert = (
+                traffic_result.get(
+                    "alert"
+                )
+            )
+
+            if traffic_alert:
+
+                print(
+                    "\n"
+                )
+
+                print(
+                    "🚦 "
+                    "TRAFFIC CONGESTION DETECTED"
+                )
+
+                print(
+                    f"   Vehicles: "
+                    f"{traffic_alert['vehicle_count']}"
+                )
+
+                print(
+                    f"   Traffic Index: "
+                    f"{traffic_alert['traffic_index']}"
+                )
+
+                print(
+                    f"   Confidence: "
+                    f"{traffic_alert['confidence']}"
+                )
+
+                print(
+                    f"   Severity: "
+                    f"{traffic_alert['severity']}"
+                )
+
+                # ------------------------------------------------
+                # Send traffic alert through normal backend path.
+                # ------------------------------------------------
+
+                send_alert(
+                    traffic_alert,
+                    gps,
+                    priority_engine,
+                    multi_bus_validator
+                )
+
+                total_alerts += 1
+
+                total_traffic_alerts += 1
+
+            # =================================================
+            # NORMAL EVENT ALERTS
+            # =================================================
 
             for detection in detections:
+
+                # ------------------------------------------------
+                # IMPORTANT:
+                #
+                # Traffic detections are NOT sent individually
+                # through AlertManager.
+                #
+                # TrafficIntelligence handles them.
+                # ------------------------------------------------
+
+                if (
+                    detection.get(
+                        "event_type"
+                    )
+                    == "traffic"
+                ):
+
+                    continue
 
                 alert = (
                     alert_manager
@@ -483,9 +727,9 @@ def main():
 
                     total_alerts += 1
 
-        # ----------------------------------------------------
-        # Store ONLY in RAM
-        # ----------------------------------------------------
+        # ====================================================
+        # STORE ONLY IN RAM
+        # ====================================================
 
         processed_video.append(
             (
@@ -494,9 +738,9 @@ def main():
             )
         )
 
-        # ----------------------------------------------------
-        # Progress
-        # ----------------------------------------------------
+        # ====================================================
+        # PROGRESS
+        # ====================================================
 
         if frame_number % 30 == 0:
 
@@ -519,24 +763,36 @@ def main():
 
     print("\n")
 
+    # ========================================================
+    # AI PROCESSING SUMMARY
+    # ========================================================
+
     print("=" * 70)
     print("AI PROCESSING COMPLETE")
     print("=" * 70)
 
     print(
-        f"Frames      : {frame_number}"
+        f"Frames            : "
+        f"{frame_number}"
     )
 
     print(
-        f"Detections  : {total_detections}"
+        f"Detections        : "
+        f"{total_detections}"
     )
 
     print(
-        f"Alerts      : {total_alerts}"
+        f"Total alerts      : "
+        f"{total_alerts}"
     )
 
     print(
-        "Saved files : NONE"
+        f"Traffic alerts    : "
+        f"{total_traffic_alerts}"
+    )
+
+    print(
+        "Saved files       : NONE"
     )
 
     # ========================================================
@@ -544,29 +800,22 @@ def main():
     # PLAYBACK
     # ========================================================
 
-    print("\nStarting playback...")
+    print(
+        "\nStarting playback..."
+    )
 
     print(
-        f"Speed: {PLAYBACK_SPEED:.2f}x"
+        f"Speed: "
+        f"{PLAYBACK_SPEED:.2f}x"
     )
 
     print(
         "Press Q to stop."
     )
 
-    # --------------------------------------------------------
-    # Calculate playback interval
-    #
-    # Original 30 FPS:
-    #
-    # 1 / 30 = 0.033 sec
-    #
-    # At 0.80x:
-    #
-    # 0.033 / 0.80 = 0.0416 sec
-    #
-    # Approximately 24 FPS visually.
-    # --------------------------------------------------------
+    # ========================================================
+    # PLAYBACK INTERVAL
+    # ========================================================
 
     frame_interval = (
         1.0
@@ -603,7 +852,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Medium-speed playback
+        # Medium-slow playback
         # ----------------------------------------------------
 
         next_frame_time += (
@@ -653,8 +902,15 @@ def main():
 
     cv2.destroyAllWindows()
 
-    print("\n" + "=" * 70)
-    print("CODYSSEY DEMO FINISHED")
+    print(
+        "\n"
+        + "=" * 70
+    )
+
+    print(
+        "CODYSSEY DEMO FINISHED"
+    )
+
     print("=" * 70)
 
     print(
@@ -670,6 +926,11 @@ def main():
     print(
         f"Alerts           : "
         f"{total_alerts}"
+    )
+
+    print(
+        f"Traffic alerts   : "
+        f"{total_traffic_alerts}"
     )
 
     print(
@@ -693,4 +954,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
