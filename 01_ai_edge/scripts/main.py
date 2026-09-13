@@ -1,227 +1,268 @@
 import cv2
+import os
+import sys
 import time
 import requests
-from datetime import datetime
-
-from detector import RoadDetector
-from alert_manager import AlertManager
-from alert_logger import AlertLogger
-
 
 # ============================================================
-# CODYSSEY CONFIGURATION
+# PATHS
 # ============================================================
 
-VIDEO_PATH = "01_ai_edge/videos/road_test.mp4"
-MODEL_PATH = "01_ai_edge/models/best.pt"
-
-BUS_ID = "BMTC-DEMO-01"
-
-BACKEND_URL = "http://127.0.0.1:8000/api/alerts"
-
-# ============================================================
-# PERFORMANCE
-# ============================================================
-
-# AI does NOT need to run on every camera frame.
-#
-# Frames are processed only in RAM and immediately discarded.
-# Nothing is saved to disk.
-AI_FRAME_INTERVAL = 3
-
-# Smaller inference size makes CPU inference substantially faster.
-AI_IMAGE_SIZE = 416
-
-# Lower threshold helps recover weaker road-damage detections.
-CONFIDENCE = 0.12
-
-# Keep video playback close to its original speed.
-PLAYBACK_SPEED = 1.0
-
-# ============================================================
-# DEMO GPS
-# ============================================================
-
-# Temporary simulated bus location.
-# Later replaced with actual GPS.
-BUS_LATITUDE = 12.9716
-BUS_LONGITUDE = 77.5946
-
-
-# ============================================================
-# INITIALIZE DETECTOR
-# ============================================================
-
-detector = RoadDetector(
-    MODEL_PATH,
-    imgsz=AI_IMAGE_SIZE
-)
-
-
-# ============================================================
-# INITIALIZE ALERT MANAGER
-# ============================================================
-
-alert_manager = AlertManager(
-    required_detections=2,
-    cooldown_seconds=8,
-    persistence_window=5
-)
-
-
-# ============================================================
-# ALERT LOGGER
-# ============================================================
-
-alert_logger = AlertLogger()
-
-
-# ============================================================
-# OPEN VIDEO
-# ============================================================
-
-cap = cv2.VideoCapture(VIDEO_PATH)
-
-if not cap.isOpened():
-
-    print("ERROR: Cannot open video.")
-
-    raise SystemExit(1)
-
-
-video_fps = cap.get(
-    cv2.CAP_PROP_FPS
-)
-
-if not video_fps or video_fps <= 1:
-    video_fps = 30
-
-
-frame_width = int(
-    cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-)
-
-frame_height = int(
-    cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-)
-
-
-# ============================================================
-# DISPLAY TIMING
-# ============================================================
-
-frame_delay_ms = max(
-    1,
-    int(
-        1000
-        /
-        video_fps
-        /
-        PLAYBACK_SPEED
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.abspath(__file__)
     )
 )
 
+sys.path.append(BASE_DIR)
 
-# ============================================================
-# START MESSAGE
-# ============================================================
+from scripts.detector import RoadDetector
+from scripts.alert_manager import AlertManager
 
-print()
+GPS_DIR = os.path.abspath(
+    os.path.join(
+        BASE_DIR,
+        "..",
+        "05_gps_gis_prioritization"
+    )
+)
 
-print("=" * 65)
-print(" CODYSSEY - MOBILE URBAN INTELLIGENCE")
-print("=" * 65)
+sys.path.append(GPS_DIR)
 
-print(f"Bus ID          : {BUS_ID}")
-print(f"Video resolution: {frame_width}x{frame_height}")
-print(f"Source FPS      : {video_fps:.1f}")
-print(f"AI interval     : Every {AI_FRAME_INTERVAL} frames")
-print(f"AI image size   : {AI_IMAGE_SIZE}x{AI_IMAGE_SIZE}")
-print(f"AI confidence   : {CONFIDENCE}")
-print(f"Playback speed  : {PLAYBACK_SPEED}x")
-
-print()
-
-print("EDGE PROCESSING")
-print("-----------------------------")
-print("Video storage   : DISABLED")
-print("Frame storage   : DISABLED")
-print("Alert storage   : ENABLED")
-print("AI processing   : IN MEMORY")
-print("Backend payload : METADATA ONLY")
-
-print()
-
-print("Detected classes:")
-print("  HMV")
-print("  LMV")
-print("  Pedestrian")
-print("  RoadDamages")
-print("  SpeedBump")
-print("  UnsurfacedRoad")
-
-print()
-
-print("Press Q to quit.")
-
-print("=" * 65)
+from gps_priority import GPSSimulator, PriorityEngine
+from multi_bus_validator import MultiBusValidator
 
 
 # ============================================================
-# RUNTIME VARIABLES
+# CONFIGURATION
 # ============================================================
 
-frame_number = 0
+VIDEO_PATH = os.path.join(
+    BASE_DIR,
+    "videos",
+    "road_test.mp4"
+)
 
-ai_processed_frames = 0
+RAD_MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "models",
+    "best.pt"
+)
 
-total_alerts = 0
+POTHOLE_MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "models",
+    "pothole.pt"
+)
 
-current_detections = []
+BACKEND_URL = (
+    "http://127.0.0.1:8000/api/alerts"
+)
 
-traffic_stats = {
-    "vehicle_count": 0,
-    "hmv_count": 0,
-    "lmv_count": 0,
-    "pedestrian_count": 0
-}
+BUS_ID = "BMTC-DEMO-01"
 
-traffic_index = 0
+# AI checks every 3rd frame
+AI_FRAME_INTERVAL = 3
 
-last_inference_time = 0
+# CPU-friendly inference size
+AI_IMAGE_SIZE = 416
 
-backend_online = True
+# ------------------------------------------------------------
+# PLAYBACK SPEED
+#
+# 1.00 = original speed
+# 0.90 = slightly slow
+# 0.80 = medium slow  <-- CURRENT
+# 0.70 = noticeably slow
+#
+# We use 0.80 because you asked for medium flow.
+# ------------------------------------------------------------
+
+PLAYBACK_SPEED = 0.80
 
 
 # ============================================================
-# SEND ALERT TO BACKEND
+# DRAW DETECTIONS
 # ============================================================
 
-def send_alert_to_backend(alert):
+def draw_detections(
+    frame,
+    detections
+):
 
-    global backend_online
+    for detection in detections:
 
-    payload = {
-        "event_type": alert["event_type"],
+        bbox = detection.get("bbox")
 
-        "confidence": alert["confidence"],
+        if not bbox:
+            continue
 
-        "latitude": BUS_LATITUDE,
+        x1, y1, x2, y2 = bbox
 
-        "longitude": BUS_LONGITUDE,
+        confidence = float(
+            detection.get(
+                "confidence",
+                0
+            )
+        )
 
-        "severity": alert["severity"],
+        class_name = detection.get(
+            "class_name",
+            "object"
+        )
 
-        "priority_score": alert["priority_score"],
+        label = (
+            f"{class_name} "
+            f"{confidence:.2f}"
+        )
 
-        "bus_id": BUS_ID,
+        # ----------------------------------------------------
+        # Bounding box
+        # ----------------------------------------------------
 
-        "timestamp": datetime.now().isoformat(),
+        cv2.rectangle(
+            frame,
+            (x1, y1),
+            (x2, y2),
+            (0, 255, 0),
+            2
+        )
 
-        "bbox": str(alert["bbox"])
-    }
+        # ----------------------------------------------------
+        # Label dimensions
+        # ----------------------------------------------------
+
+        (
+            text_width,
+            text_height
+        ), _ = cv2.getTextSize(
+            label,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            2
+        )
+
+        label_top = max(
+            0,
+            y1 - text_height - 8
+        )
+
+        # ----------------------------------------------------
+        # Label background
+        # ----------------------------------------------------
+
+        cv2.rectangle(
+            frame,
+            (x1, label_top),
+            (
+                x1 + text_width + 8,
+                y1
+            ),
+            (0, 255, 0),
+            -1
+        )
+
+        # ----------------------------------------------------
+        # Label
+        # ----------------------------------------------------
+
+        cv2.putText(
+            frame,
+            label,
+            (
+                x1 + 4,
+                max(
+                    text_height + 2,
+                    y1 - 4
+                )
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 0, 0),
+            2
+        )
+
+
+# ============================================================
+# SEND ALERT
+# ============================================================
+
+def send_alert(
+    alert,
+    gps,
+    priority_engine,
+    multi_bus_validator
+):
 
     try:
+
+        location = gps.move()
+
+        event = {
+            "event_type": alert["event_type"],
+            "confidence": alert["confidence"],
+            "bus_id": BUS_ID,
+            "latitude": location["latitude"],
+            "longitude": location["longitude"],
+            "timestamp": alert["timestamp"]
+        }
+
+        # ----------------------------------------------------
+        # Multi-bus validation
+        # ----------------------------------------------------
+
+        validation = (
+            multi_bus_validator.add_event(
+                event
+            )
+        )
+
+        cross_bus = (
+            validation[
+                "cross_bus_validation"
+            ]
+        )
+
+        bus_count = (
+            cross_bus["bus_count"]
+        )
+
+        # ----------------------------------------------------
+        # Priority
+        # ----------------------------------------------------
+
+        priority = (
+            priority_engine.calculate(
+                alert["event_type"],
+                alert["confidence"],
+                bus_count
+            )
+        )
+
+        severity = (
+            priority_engine.severity(
+                alert["event_type"],
+                priority
+            )
+        )
+
+        # ----------------------------------------------------
+        # ONLY METADATA IS SENT
+        # ----------------------------------------------------
+
+        payload = {
+            "event_type": alert["event_type"],
+            "confidence": alert["confidence"],
+            "latitude": location["latitude"],
+            "longitude": location["longitude"],
+            "severity": severity,
+            "priority_score": priority,
+            "bus_id": BUS_ID,
+            "timestamp": alert["timestamp"],
+            "bbox": str(
+                alert.get("bbox")
+            )
+        }
 
         response = requests.post(
             BACKEND_URL,
@@ -229,606 +270,427 @@ def send_alert_to_backend(alert):
             timeout=2
         )
 
-        if response.status_code in (200, 201):
-
-            backend_online = True
-
-            print()
-            print("🚨 CODYSSEY ALERT → BACKEND")
-            print("-" * 55)
+        if response.status_code in (
+            200,
+            201
+        ):
 
             print(
-                f"Event      : "
-                f"{alert['event_type']}"
+                f"[ALERT SAVED] "
+                f"{alert['event_type']} | "
+                f"confidence="
+                f"{alert['confidence']:.2f} | "
+                f"priority={priority}"
             )
 
-            print(
-                f"Class      : "
-                f"{alert['class_name']}"
-            )
-
-            print(
-                f"Confidence : "
-                f"{alert['confidence']}"
-            )
-
-            print(
-                f"Severity   : "
-                f"{alert['severity']}"
-            )
-
-            print(
-                f"Priority   : "
-                f"{alert['priority_score']}"
-            )
-
-            print(
-                f"Bus        : "
-                f"{BUS_ID}"
-            )
-
-            print(
-                f"GPS        : "
-                f"{BUS_LATITUDE}, "
-                f"{BUS_LONGITUDE}"
-            )
-
-            print(
-                "Storage    : ALERT METADATA ONLY"
-            )
-
-            print("-" * 55)
-
-            return True
-
-        backend_online = False
+    except Exception as e:
 
         print(
-            f"Backend HTTP error: "
-            f"{response.status_code}"
-        )
-
-    except requests.RequestException:
-
-        if backend_online:
-
-            print()
-            print(
-                "⚠ Backend unavailable."
-            )
-
-            print(
-                "Alert remains available "
-                "for local logging."
-            )
-
-            backend_online = False
-
-    return False
-
-
-# ============================================================
-# DRAW DETECTIONS
-# ============================================================
-
-def draw_detection(
-    frame,
-    detection
-):
-
-    x1, y1, x2, y2 = detection["bbox"]
-
-    class_name = detection[
-        "class_name"
-    ]
-
-    confidence = detection[
-        "confidence"
-    ]
-
-    event_type = detection[
-        "event_type"
-    ]
-
-
-    # Road events = red
-    if event_type in (
-        "road_damage",
-        "road_infrastructure"
-    ):
-
-        color = (
-            0,
-            0,
-            255
-        )
-
-    # Traffic = blue
-    elif event_type == "traffic":
-
-        color = (
-            255,
-            180,
-            0
-        )
-
-    else:
-
-        color = (
-            0,
-            255,
-            0
-        )
-
-
-    # Bounding box
-
-    cv2.rectangle(
-        frame,
-        (x1, y1),
-        (x2, y2),
-        color,
-        3
-    )
-
-
-    # Label
-
-    label = (
-        f"{class_name} "
-        f"{confidence:.2f}"
-    )
-
-
-    label_y = max(
-        25,
-        y1 - 8
-    )
-
-
-    cv2.putText(
-        frame,
-        label,
-        (x1, label_y),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        color,
-        2
-    )
-
-
-# ============================================================
-# DRAW CODYSSEY UI
-# ============================================================
-
-def draw_interface(
-    frame,
-    traffic_stats,
-    traffic_index,
-    alert_count
-):
-
-    # --------------------------------------------------------
-    # TOP BAR
-    # --------------------------------------------------------
-
-    cv2.rectangle(
-        frame,
-        (0, 0),
-        (frame.shape[1], 100),
-        (15, 15, 15),
-        -1
-    )
-
-
-    cv2.putText(
-        frame,
-        "CODYSSEY | MOBILE URBAN INTELLIGENCE",
-        (15, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.70,
-        (255, 255, 255),
-        2
-    )
-
-
-    cv2.putText(
-        frame,
-        f"BUS: {BUS_ID}",
-        (15, 62),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        (255, 255, 255),
-        2
-    )
-
-
-    cv2.putText(
-        frame,
-        "EDGE AI | METADATA ONLY",
-        (15, 88),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.50,
-        (180, 220, 255),
-        2
-    )
-
-
-    # --------------------------------------------------------
-    # TRAFFIC PANEL
-    # --------------------------------------------------------
-
-    panel_x = 15
-
-    panel_y = 120
-
-
-    lines = [
-        (
-            "Vehicles",
-            traffic_stats["vehicle_count"]
-        ),
-
-        (
-            "HMV",
-            traffic_stats["hmv_count"]
-        ),
-
-        (
-            "LMV",
-            traffic_stats["lmv_count"]
-        ),
-
-        (
-            "Pedestrians",
-            traffic_stats[
-                "pedestrian_count"
-            ]
-        ),
-
-        (
-            "Traffic Index",
-            traffic_index
-        ),
-
-        (
-            "Validated Alerts",
-            alert_count
-        )
-    ]
-
-
-    for i, (
-        name,
-        value
-    ) in enumerate(lines):
-
-        y = (
-            panel_y
-            +
-            i * 28
-        )
-
-
-        cv2.putText(
-            frame,
-            f"{name}: {value}",
-            (
-                panel_x,
-                y
-            ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.52,
-            (255, 255, 255),
-            2
+            f"[BACKEND] {e}"
         )
 
 
 # ============================================================
-# MAIN EDGE LOOP
+# MAIN
 # ============================================================
 
-while True:
+def main():
 
-    success, frame = cap.read()
-
-    if not success:
-
-        print()
-        print("Video finished.")
-
-        break
-
-
-    frame_number += 1
-
+    print("=" * 70)
+    print("CODYSSEY - AI VIDEO DEMO")
+    print("=" * 70)
 
     # ========================================================
-    # AI INFERENCE
+    # LOAD MODELS
     # ========================================================
 
-    if (
-        frame_number
-        %
-        AI_FRAME_INTERVAL
-        == 0
-    ):
+    print("\nLoading AI models...")
 
-        inference_start = time.time()
-
-
-        # IMPORTANT:
-        #
-        # The frame exists only in RAM.
-        #
-        # Nothing is saved.
-        #
-        # YOLO processes it and the frame continues
-        # through the display pipeline.
-
-        current_detections = detector.detect(
-            frame,
-            confidence=CONFIDENCE
-        )
-
-
-        ai_processed_frames += 1
-
-
-        # ----------------------------------------------------
-        # TRAFFIC
-        # ----------------------------------------------------
-
-        traffic_stats = detector.count_traffic(
-            current_detections
-        )
-
-
-        traffic_index = detector.calculate_traffic_index(
-            current_detections,
-            frame.shape[1],
-            frame.shape[0]
-        )
-
-
-        # ----------------------------------------------------
-        # ALERT VALIDATION
-        # ----------------------------------------------------
-
-        for detection in current_detections:
-
-            alert = alert_manager.process_detection(
-                detection
-            )
-
-
-            if alert is None:
-                continue
-
-
-            total_alerts += 1
-
-
-            # Add bus information.
-
-            alert["bus_id"] = BUS_ID
-
-
-            # Add GPS information.
-
-            alert["latitude"] = BUS_LATITUDE
-
-            alert["longitude"] = BUS_LONGITUDE
-
-
-            # ------------------------------------------------
-            # CONSOLE
-            # ------------------------------------------------
-
-            print()
-
-            print(
-                "🚨🚨 VALIDATED URBAN EVENT 🚨🚨"
-            )
-
-            print(
-                "=" * 55
-            )
-
-            print(
-                f"Event      : "
-                f"{alert['event_type']}"
-            )
-
-            print(
-                f"Class      : "
-                f"{alert['class_name']}"
-            )
-
-            print(
-                f"Confidence : "
-                f"{alert['confidence']}"
-            )
-
-            print(
-                f"Severity   : "
-                f"{alert['severity']}"
-            )
-
-            print(
-                f"Priority   : "
-                f"{alert['priority_score']}"
-            )
-
-            print(
-                f"Bus ID     : "
-                f"{BUS_ID}"
-            )
-
-            print(
-                f"GPS        : "
-                f"{BUS_LATITUDE}, "
-                f"{BUS_LONGITUDE}"
-            )
-
-            print(
-                "Storage    : "
-                "METADATA ONLY"
-            )
-
-            print(
-                "=" * 55
-            )
-
-
-            # ------------------------------------------------
-            # LOCAL ALERT LOGGER
-            # ------------------------------------------------
-
-            alert_logger.save_alert(
-                alert
-            )
-
-
-            # ------------------------------------------------
-            # BACKEND
-            # ------------------------------------------------
-
-            send_alert_to_backend(
-                alert
-            )
-
-
-        last_inference_time = (
-            time.time()
-            -
-            inference_start
-        )
-
-
-    # ========================================================
-    # DRAW
-    # ========================================================
-
-    display_frame = frame.copy()
-
-
-    for detection in current_detections:
-
-        draw_detection(
-            display_frame,
-            detection
-        )
-
-
-    draw_interface(
-        display_frame,
-        traffic_stats,
-        traffic_index,
-        total_alerts
+    detector = RoadDetector(
+        RAD_MODEL_PATH,
+        POTHOLE_MODEL_PATH,
+        imgsz=AI_IMAGE_SIZE
     )
 
+    alert_manager = AlertManager(
+        required_detections=2,
+        cooldown_seconds=8,
+        persistence_window=5
+    )
+
+    gps = GPSSimulator(
+        start_lat=12.9716,
+        start_lon=77.5946
+    )
+
+    priority_engine = PriorityEngine()
+
+    multi_bus_validator = (
+        MultiBusValidator(
+            distance_threshold_m=50,
+            time_window_seconds=300
+        )
+    )
+
+    print("AI models ready.")
+
+    # ========================================================
+    # OPEN VIDEO
+    # ========================================================
+
+    cap = cv2.VideoCapture(
+        VIDEO_PATH
+    )
+
+    if not cap.isOpened():
+
+        print(
+            "\nERROR: Could not open video:"
+        )
+
+        print(
+            VIDEO_PATH
+        )
+
+        return
 
     # ========================================================
     # VIDEO INFORMATION
     # ========================================================
 
-    cv2.putText(
-        display_frame,
-        f"Source FPS: {video_fps:.1f}",
-        (
-            15,
-            display_frame.shape[0] - 45
-        ),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.48,
-        (200, 200, 200),
-        1
+    fps = cap.get(
+        cv2.CAP_PROP_FPS
     )
 
+    if fps <= 0:
 
-    cv2.putText(
-        display_frame,
-        f"AI frames: {ai_processed_frames}",
-        (
-            15,
-            display_frame.shape[0] - 22
-        ),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.48,
-        (200, 200, 200),
-        1
+        fps = 30.0
+
+    total_frames = int(
+        cap.get(
+            cv2.CAP_PROP_FRAME_COUNT
+        )
     )
 
-
-    # ========================================================
-    # SHOW
-    # ========================================================
-
-    cv2.imshow(
-        "CODYSSEY - Urban Intelligence Edge Gateway",
-        display_frame
+    print("\nVideo:")
+    print(
+        f"Original FPS : {fps:.2f}"
     )
 
+    print(
+        f"Total frames : {total_frames}"
+    )
+
+    print(
+        f"Playback     : {PLAYBACK_SPEED:.2f}x"
+    )
+
+    print(
+        "\nAI processing starts..."
+    )
 
     # ========================================================
-    # MAINTAIN ORIGINAL VIDEO SPEED
+    # IN-MEMORY PROCESSED VIDEO
+    # ========================================================
+    #
+    # IMPORTANT:
+    #
+    # Nothing is written to disk.
+    #
+    # Each frame remains temporarily in RAM together with
+    # ONLY the detections belonging to that exact frame.
+    #
     # ========================================================
 
-    key = cv2.waitKey(
-        frame_delay_ms
-    ) & 0xFF
+    processed_video = []
 
+    frame_number = 0
 
-    if key == ord("q"):
+    total_detections = 0
 
-        print()
-        print(
-            "User stopped Edge AI."
+    total_alerts = 0
+
+    # ========================================================
+    # PASS 1
+    # AI PROCESSING
+    # ========================================================
+
+    while True:
+
+        ret, frame = cap.read()
+
+        if not ret:
+
+            break
+
+        frame_number += 1
+
+        detections = []
+
+        # ----------------------------------------------------
+        # AI inference
+        # ----------------------------------------------------
+
+        if (
+            frame_number
+            % AI_FRAME_INTERVAL
+            == 0
+        ):
+
+            try:
+
+                detections = (
+                    detector.detect(
+                        frame
+                    )
+                )
+
+            except Exception as e:
+
+                print(
+                    f"\n[AI ERROR] "
+                    f"Frame {frame_number}: "
+                    f"{e}"
+                )
+
+                detections = []
+
+            total_detections += (
+                len(detections)
+            )
+
+            # ------------------------------------------------
+            # Alert generation
+            # ------------------------------------------------
+
+            for detection in detections:
+
+                alert = (
+                    alert_manager
+                    .process_detection(
+                        detection
+                    )
+                )
+
+                if alert is not None:
+
+                    send_alert(
+                        alert,
+                        gps,
+                        priority_engine,
+                        multi_bus_validator
+                    )
+
+                    total_alerts += 1
+
+        # ----------------------------------------------------
+        # Store ONLY in RAM
+        # ----------------------------------------------------
+
+        processed_video.append(
+            (
+                frame,
+                detections
+            )
         )
 
-        break
+        # ----------------------------------------------------
+        # Progress
+        # ----------------------------------------------------
+
+        if frame_number % 30 == 0:
+
+            percentage = (
+                frame_number
+                / total_frames
+                * 100
+            )
+
+            print(
+                f"\rAI processing: "
+                f"{frame_number}/"
+                f"{total_frames} "
+                f"({percentage:.1f}%)",
+                end="",
+                flush=True
+            )
+
+    cap.release()
+
+    print("\n")
+
+    print("=" * 70)
+    print("AI PROCESSING COMPLETE")
+    print("=" * 70)
+
+    print(
+        f"Frames      : {frame_number}"
+    )
+
+    print(
+        f"Detections  : {total_detections}"
+    )
+
+    print(
+        f"Alerts      : {total_alerts}"
+    )
+
+    print(
+        "Saved files : NONE"
+    )
+
+    # ========================================================
+    # PASS 2
+    # PLAYBACK
+    # ========================================================
+
+    print("\nStarting playback...")
+
+    print(
+        f"Speed: {PLAYBACK_SPEED:.2f}x"
+    )
+
+    print(
+        "Press Q to stop."
+    )
+
+    # --------------------------------------------------------
+    # Calculate playback interval
+    #
+    # Original 30 FPS:
+    #
+    # 1 / 30 = 0.033 sec
+    #
+    # At 0.80x:
+    #
+    # 0.033 / 0.80 = 0.0416 sec
+    #
+    # Approximately 24 FPS visually.
+    # --------------------------------------------------------
+
+    frame_interval = (
+        1.0
+        / fps
+        / PLAYBACK_SPEED
+    )
+
+    next_frame_time = (
+        time.perf_counter()
+    )
+
+    # ========================================================
+    # PLAY
+    # ========================================================
+
+    for frame, detections in processed_video:
+
+        # ----------------------------------------------------
+        # Draw detections belonging to this exact frame
+        # ----------------------------------------------------
+
+        draw_detections(
+            frame,
+            detections
+        )
+
+        # ----------------------------------------------------
+        # Display
+        # ----------------------------------------------------
+
+        cv2.imshow(
+            "CODYSSEY - AI Edge Intelligence",
+            frame
+        )
+
+        # ----------------------------------------------------
+        # Medium-speed playback
+        # ----------------------------------------------------
+
+        next_frame_time += (
+            frame_interval
+        )
+
+        remaining = (
+            next_frame_time
+            - time.perf_counter()
+        )
+
+        if remaining > 0:
+
+            key = cv2.waitKey(
+                max(
+                    1,
+                    int(
+                        remaining
+                        * 1000
+                    )
+                )
+            ) & 0xFF
+
+        else:
+
+            key = cv2.waitKey(
+                1
+            ) & 0xFF
+
+            next_frame_time = (
+                time.perf_counter()
+            )
+
+        # ----------------------------------------------------
+        # Quit
+        # ----------------------------------------------------
+
+        if key == ord("q"):
+
+            break
+
+    # ========================================================
+    # CLEANUP
+    # ========================================================
+
+    processed_video.clear()
+
+    cv2.destroyAllWindows()
+
+    print("\n" + "=" * 70)
+    print("CODYSSEY DEMO FINISHED")
+    print("=" * 70)
+
+    print(
+        f"Frames processed : "
+        f"{frame_number}"
+    )
+
+    print(
+        f"Detections       : "
+        f"{total_detections}"
+    )
+
+    print(
+        f"Alerts           : "
+        f"{total_alerts}"
+    )
+
+    print(
+        "Frames saved     : 0"
+    )
+
+    print(
+        "Video saved      : 0"
+    )
+
+    print(
+        "Backend          : metadata only"
+    )
+
+    print("=" * 70)
 
 
 # ============================================================
-# CLEANUP
+# WINDOWS ENTRY POINT
 # ============================================================
 
-cap.release()
+if __name__ == "__main__":
 
-cv2.destroyAllWindows()
-
-
-print()
-print("=" * 65)
-print("CODYSSEY EDGE AI STOPPED")
-print("=" * 65)
-
-print(
-    f"Video frames read : "
-    f"{frame_number}"
-)
-
-print(
-    f"AI inferences     : "
-    f"{ai_processed_frames}"
-)
-
-print(
-    f"Validated alerts  : "
-    f"{total_alerts}"
-)
-
-print(
-    "Frames saved      : 0"
-)
-
-print(
-    "Video saved       : 0"
-)
-
-print(
-    "Persistent data   : ALERT METADATA ONLY"
-)
-
-print("=" * 65)
+    main()

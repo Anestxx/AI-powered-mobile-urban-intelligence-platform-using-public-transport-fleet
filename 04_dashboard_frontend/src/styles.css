@@ -125,3 +125,50 @@ body {
 footer {
   font-size: 9px;
 }
+/* ============================================================
+   CODYSSEY MAP MARKERS
+   ============================================================ */
+
+.codyssey-event-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.event-marker-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--marker-color);
+  border: 3px solid rgba(255,255,255,.9);
+  box-shadow:
+    0 0 0 5px var(--marker-shadow),
+    0 3px 12px rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.event-marker-dot span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: white;
+}
+
+.codyssey-bus-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.bus-marker-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(114,241,168,.16);
+  border: 1px solid rgba(114,241,168,.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: 0 0 12px rgba(114,241,168,.25);
+}
