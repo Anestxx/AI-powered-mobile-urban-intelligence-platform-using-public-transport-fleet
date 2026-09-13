@@ -52,6 +52,7 @@ import {
 
 import L from "leaflet";
 
+
 // ============================================================
 // CONFIG
 // ============================================================
@@ -132,6 +133,19 @@ const ROUTE = [
 
 
 // ============================================================
+// EMERGENCY CORRIDOR
+// ============================================================
+
+const DEFAULT_EMERGENCY_CORRIDOR = [
+  [12.9716, 77.5946],
+  [12.9688, 77.5995],
+  [12.9640, 77.6065],
+  [12.9570, 77.6140],
+  [12.9490, 77.6210]
+];
+
+
+// ============================================================
 // ICONS
 // ============================================================
 
@@ -142,42 +156,130 @@ const ICONS = {
   unsafe: ShieldAlert,
   emergency: Ambulance
 };
+
+
 // ============================================================
-// MAP MARKER ICONS
+// MAP EVENT MARKER
 // ============================================================
 
 function createEventIcon(event) {
+
   let color = "#f6b73c";
 
-  if (event.severity === "High") color = "#ff5d73";
-  if (event.category === "traffic") color = "#f6b73c";
-  if (event.category === "infrastructure") color = "#59d7ff";
-  if (event.category === "unsafe") color = "#b58cff";
-  if (event.category === "emergency") color = "#ff4d4d";
+  if (
+    event.severity === "High"
+  ) {
+    color = "#ff5d73";
+  }
+
+  if (
+    event.severity === "Critical"
+  ) {
+    color = "#ff3030";
+  }
+
+  if (
+    event.category === "traffic"
+  ) {
+    color = "#f6b73c";
+  }
+
+  if (
+    event.category === "infrastructure"
+  ) {
+    color = "#59d7ff";
+  }
+
+  if (
+    event.category === "unsafe"
+  ) {
+    color = "#b58cff";
+  }
+
+  if (
+    event.category === "emergency"
+  ) {
+    color = "#ff3030";
+  }
 
   return L.divIcon({
-    className: "codyssey-event-marker",
+    className:
+      "codyssey-event-marker",
+
     html: `
       <div
         class="event-marker-dot"
-        style="--marker-color:${color};--marker-shadow:${color}55;"
+        style="
+          --marker-color:${color};
+          --marker-shadow:${color}55;
+        "
       >
         <span></span>
       </div>
     `,
+
     iconSize: [20, 20],
     iconAnchor: [10, 10]
   });
 }
 
+
+// ============================================================
+// BUS MARKER
+// ============================================================
+
 function createBusIcon() {
+
   return L.divIcon({
-    className: "codyssey-bus-marker",
-    html: `<div class="bus-marker-dot">🚌</div>`,
+    className:
+      "codyssey-bus-marker",
+
+    html:
+      `<div class="bus-marker-dot">🚌</div>`,
+
     iconSize: [28, 28],
     iconAnchor: [14, 14]
   });
 }
+
+
+// ============================================================
+// EMERGENCY MARKER
+// ============================================================
+
+function createEmergencyIcon() {
+
+  return L.divIcon({
+    className:
+      "codyssey-emergency-marker",
+
+    html: `
+      <div
+        style="
+          width:34px;
+          height:34px;
+          border-radius:50%;
+          background:#ff3030;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          color:white;
+          font-size:18px;
+          border:3px solid white;
+          box-shadow:
+            0 0 0 6px #ff303044,
+            0 0 25px #ff3030aa;
+        "
+      >
+        🚑
+      </div>
+    `,
+
+    iconSize: [34, 34],
+    iconAnchor: [17, 17]
+  });
+}
+
 
 // ============================================================
 // EVENT CONVERTER
@@ -186,7 +288,13 @@ function createBusIcon() {
 function convertBackendAlert(alert) {
 
   const eventType =
-    alert.event_type || "Unknown event";
+    alert.event_type ||
+    "Unknown event";
+
+
+  // ----------------------------------------------------------
+  // CATEGORY
+  // ----------------------------------------------------------
 
   let category = "road";
 
@@ -218,67 +326,140 @@ function convertBackendAlert(alert) {
     category = "road";
   }
 
+
+  // ----------------------------------------------------------
+  // VALUES
+  // ----------------------------------------------------------
+
   const confidence =
-    Number(alert.confidence || 0);
+    Number(
+      alert.confidence || 0
+    );
 
   const priority =
-    Number(alert.priority_score || 0);
+    Number(
+      alert.priority_score || 0
+    );
+
 
   let severity =
-    alert.severity || "medium";
+    alert.severity ||
+    "medium";
 
   severity =
     severity.charAt(0).toUpperCase() +
     severity.slice(1);
 
+
+  // ----------------------------------------------------------
+  // DISPLAY NAME
+  // ----------------------------------------------------------
+
   let displayName =
     eventType
       .replaceAll("_", " ")
-      .replace(/\b\w/g, c => c.toUpperCase());
+      .replace(
+        /\b\w/g,
+        c => c.toUpperCase()
+      );
+
 
   if (
     eventType === "pothole"
   ) {
-    displayName = "Pothole";
+    displayName =
+      "Pothole";
   }
 
   if (
     eventType === "road_damage"
   ) {
-    displayName = "Road damage";
+    displayName =
+      "Road damage";
   }
 
   if (
-    eventType === "road_infrastructure"
+    eventType ===
+    "road_infrastructure"
   ) {
-    displayName = "Road infrastructure";
+    displayName =
+      "Road infrastructure";
   }
 
   if (
-    eventType === "unsafe_behaviour"
+    eventType ===
+    "unsafe_behaviour"
   ) {
-    displayName = "Unsafe behaviour";
+    displayName =
+      "Unsafe behaviour";
   }
 
   if (
     eventType === "traffic"
   ) {
-    displayName = "Traffic";
+    displayName =
+      alert.class_name ===
+      "congestion"
+        ? "Traffic congestion"
+        : "Traffic";
   }
 
   if (
     eventType === "emergency"
   ) {
-    displayName = "Emergency";
+
+    if (
+      alert.class_name
+    ) {
+
+      const emergencyName =
+        String(
+          alert.class_name
+        );
+
+      displayName =
+        emergencyName
+          .replace(
+            /\b\w/g,
+            c =>
+              c.toUpperCase()
+          );
+
+    } else {
+
+      displayName =
+        "Emergency vehicle";
+    }
   }
 
+
+  // ----------------------------------------------------------
+  // LOCATION
+  // ----------------------------------------------------------
+
+  const latitude =
+    Number(alert.latitude);
+
+  const longitude =
+    Number(alert.longitude);
+
+
+  const hasLocation =
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude);
+
+
   return {
+
     id:
       alert.id
-        ? `EVT-${String(alert.id).padStart(4, "0")}`
+        ? `EVT-${String(
+            alert.id
+          ).padStart(4, "0")}`
         : `EVT-${Date.now()}`,
 
-    type: displayName,
+    type:
+      displayName,
 
     category,
 
@@ -287,26 +468,40 @@ function convertBackendAlert(alert) {
     confidence,
 
     location:
-      alert.latitude && alert.longitude
-        ? `${Number(alert.latitude).toFixed(4)}, ${Number(
-            alert.longitude
-          ).toFixed(4)}`
+      hasLocation
+        ? `${latitude.toFixed(
+            4
+          )}, ${longitude.toFixed(
+            4
+          )}`
         : "Location unavailable",
 
     lat:
-      Number(alert.latitude) || CENTER[0],
+      hasLocation
+        ? latitude
+        : CENTER[0],
 
     lng:
-      Number(alert.longitude) || CENTER[1],
+      hasLocation
+        ? longitude
+        : CENTER[1],
 
     bus:
-      alert.bus_id || "Unknown bus",
+      alert.bus_id ||
+      "Unknown bus",
 
-    buses: 1,
+    buses:
+      Number(
+        alert.buses ||
+        alert.validation?.cross_bus_validation?.bus_count ||
+        1
+      ),
 
     time:
       alert.timestamp
-        ? formatTime(alert.timestamp)
+        ? formatTime(
+            alert.timestamp
+          )
         : "Just now",
 
     status:
@@ -319,7 +514,10 @@ function convertBackendAlert(alert) {
         ? "High"
         : "Monitoring",
 
-    priority
+    priority,
+
+    raw:
+      alert
   };
 }
 
@@ -337,30 +535,52 @@ function formatTime(timestamp) {
 
     const seconds =
       Math.floor(
-        (Date.now() - date.getTime()) /
-          1000
+        (
+          Date.now() -
+          date.getTime()
+        ) / 1000
       );
 
-    if (seconds < 60) {
+
+    if (
+      seconds < 0
+    ) {
+      return "Just now";
+    }
+
+
+    if (
+      seconds < 60
+    ) {
       return `${seconds} sec ago`;
     }
 
-    const minutes =
-      Math.floor(seconds / 60);
 
-    if (minutes < 60) {
+    const minutes =
+      Math.floor(
+        seconds / 60
+      );
+
+
+    if (
+      minutes < 60
+    ) {
       return `${minutes} min ago`;
     }
 
+
     const hours =
-      Math.floor(minutes / 60);
+      Math.floor(
+        minutes / 60
+      );
 
     return `${hours} hr ago`;
 
-  } catch {
+  }
+
+  catch {
 
     return "Recently";
-
   }
 }
 
@@ -373,11 +593,16 @@ function FlyTo({
   target
 }) {
 
-  const map = useMap();
+  const map =
+    useMap();
+
 
   useEffect(() => {
 
-    if (target) {
+    if (
+      target
+    ) {
+
       map.flyTo(
         target,
         13,
@@ -387,29 +612,39 @@ function FlyTo({
       );
     }
 
-    const handleRecenter = () => {
-      map.flyTo(
-        CENTER,
-        12,
-        {
-          duration: 0.7
-        }
-      );
-    };
+
+    const handleRecenter =
+      () => {
+
+        map.flyTo(
+          CENTER,
+          12,
+          {
+            duration: 0.7
+          }
+        );
+      };
+
 
     window.addEventListener(
       "codyssey-recenter",
       handleRecenter
     );
 
+
     return () => {
+
       window.removeEventListener(
         "codyssey-recenter",
         handleRecenter
       );
     };
 
-  }, [target, map]);
+  }, [
+    target,
+    map
+  ]);
+
 
   return null;
 }
@@ -425,6 +660,7 @@ function Badge({
 }) {
 
   return (
+
     <span
       className={
         "badge " + tone
@@ -449,9 +685,11 @@ function Stat({
 }) {
 
   return (
+
     <div
       className={
-        "stat-card " + tone
+        "stat-card " +
+        tone
       }
     >
 
@@ -459,15 +697,23 @@ function Stat({
         <Icon size={18} />
       </div>
 
+
       <div className="stat-copy">
 
-        <span>{label}</span>
+        <span>
+          {label}
+        </span>
 
-        <strong>{value}</strong>
+        <strong>
+          {value}
+        </strong>
 
-        <small>{detail}</small>
+        <small>
+          {detail}
+        </small>
 
       </div>
+
 
       <ArrowUpRight
         size={16}
@@ -487,10 +733,30 @@ function MapPanel({
   events,
   selected,
   setSelected,
-  showBuses
+  showBuses,
+  emergencyEvent
 }) {
 
+  const emergencyPosition =
+    emergencyEvent
+      ? [
+          emergencyEvent.lat,
+          emergencyEvent.lng
+        ]
+      : null;
+
+
+  const emergencyCorridor =
+    emergencyEvent
+      ? [
+          emergencyPosition,
+          ...DEFAULT_EMERGENCY_CORRIDOR
+        ]
+      : [];
+
+
   return (
+
     <div className="map-wrap">
 
       <MapContainer
@@ -505,6 +771,11 @@ function MapPanel({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
+
+        {/* ----------------------------------------------------
+            NORMAL SENSING ROUTE
+        ---------------------------------------------------- */}
+
         <Polyline
           positions={ROUTE}
           pathOptions={{
@@ -515,98 +786,335 @@ function MapPanel({
           }}
         />
 
-        {events.map(event => (
-          <Marker
-            key={event.id}
-            position={[event.lat, event.lng]}
-            icon={createEventIcon(event)}
-            eventHandlers={{
-              click: () => setSelected(event)
+
+        {/* ----------------------------------------------------
+            EMERGENCY PRIORITY CORRIDOR
+        ---------------------------------------------------- */}
+
+        {emergencyEvent && (
+
+          <Polyline
+            positions={
+              emergencyCorridor
+            }
+            pathOptions={{
+              color: "#ff3030",
+              weight: 7,
+              opacity: 0.95,
+              dashArray: "12 8"
             }}
-          >
-            <Popup>
-              <div style={{ minWidth: "180px" }}>
-                <strong
+          />
+
+        )}
+
+
+        {/* ----------------------------------------------------
+            EVENT MARKERS
+        ---------------------------------------------------- */}
+
+        {events.map(
+          event => (
+
+            <Marker
+              key={event.id}
+              position={[
+                event.lat,
+                event.lng
+              ]}
+              icon={
+                createEventIcon(
+                  event
+                )
+              }
+              eventHandlers={{
+                click: () =>
+                  setSelected(
+                    event
+                  )
+              }}
+            >
+
+              <Popup>
+
+                <div
                   style={{
-                    display: "block",
-                    fontSize: "14px",
-                    marginBottom: "6px"
+                    minWidth:
+                      "180px"
                   }}
                 >
-                  {event.type}
-                </strong>
 
-                <div style={{ fontSize: "11px", marginBottom: "4px" }}>
-                  📍 {event.location}
-                </div>
-
-                <div style={{ fontSize: "11px", marginBottom: "4px" }}>
-                  🚌 {event.bus}
-                </div>
-
-                <div style={{ fontSize: "11px", marginBottom: "4px" }}>
-                  Confidence: {Math.round(event.confidence * 100)}%
-                </div>
-
-                <div style={{ fontSize: "11px" }}>
-                  Priority: {event.priority}
-                </div>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
-
-        {showBuses &&
-          BUSES.map(bus => (
-            <Marker
-              key={bus.id}
-              position={[bus.lat, bus.lng]}
-              icon={createBusIcon()}
-            >
-              <Popup>
-                <div style={{ minWidth: "150px" }}>
                   <strong
                     style={{
-                      display: "block",
-                      fontSize: "13px",
-                      marginBottom: "5px"
+                      display:
+                        "block",
+                      fontSize:
+                        "14px",
+                      marginBottom:
+                        "6px"
                     }}
                   >
-                    {bus.id}
+                    {event.type}
                   </strong>
 
-                  <div style={{ fontSize: "11px" }}>
-                    Route: {bus.route}
+
+                  <div
+                    style={{
+                      fontSize:
+                        "11px",
+                      marginBottom:
+                        "4px"
+                    }}
+                  >
+                    📍{" "}
+                    {event.location}
                   </div>
 
-                  <div style={{ fontSize: "11px" }}>
-                    Speed: {bus.speed} km/h
+
+                  <div
+                    style={{
+                      fontSize:
+                        "11px",
+                      marginBottom:
+                        "4px"
+                    }}
+                  >
+                    🚌{" "}
+                    {event.bus}
                   </div>
 
-                  <div style={{ fontSize: "11px" }}>
-                    Events: {bus.events}
+
+                  <div
+                    style={{
+                      fontSize:
+                        "11px",
+                      marginBottom:
+                        "4px"
+                    }}
+                  >
+                    Confidence:{" "}
+                    {Math.round(
+                      event.confidence *
+                      100
+                    )}
+                    %
                   </div>
 
-                  <div style={{ fontSize: "11px" }}>
-                    Status: {bus.state}
+
+                  <div
+                    style={{
+                      fontSize:
+                        "11px"
+                    }}
+                  >
+                    Priority:{" "}
+                    {event.priority}
                   </div>
+
                 </div>
+
               </Popup>
+
             </Marker>
-          ))
-        }
+
+          )
+        )}
+
+
+        {/* ----------------------------------------------------
+            EMERGENCY VEHICLE MARKER
+        ---------------------------------------------------- */}
+
+        {emergencyEvent && (
+
+          <Marker
+            position={[
+              emergencyEvent.lat,
+              emergencyEvent.lng
+            ]}
+            icon={
+              createEmergencyIcon()
+            }
+          >
+
+            <Popup>
+
+              <div
+                style={{
+                  minWidth:
+                    "200px"
+                }}
+              >
+
+                <strong>
+                  🚑{" "}
+                  {emergencyEvent.type}
+                </strong>
+
+                <div
+                  style={{
+                    marginTop:
+                      "8px",
+                    fontSize:
+                      "12px"
+                  }}
+                >
+                  AI detected emergency
+                  vehicle
+                </div>
+
+                <div
+                  style={{
+                    marginTop:
+                      "5px",
+                    fontSize:
+                      "12px"
+                  }}
+                >
+                  Confidence:{" "}
+                  {Math.round(
+                    emergencyEvent.confidence *
+                    100
+                  )}
+                  %
+                </div>
+
+                <div
+                  style={{
+                    marginTop:
+                      "5px",
+                    fontSize:
+                      "12px"
+                  }}
+                >
+                  Priority:{" "}
+                  {emergencyEvent.priority}
+                </div>
+
+              </div>
+
+            </Popup>
+
+          </Marker>
+
+        )}
+
+
+        {/* ----------------------------------------------------
+            BUS MARKERS
+        ---------------------------------------------------- */}
+
+        {showBuses &&
+          BUSES.map(
+            bus => (
+
+              <Marker
+                key={bus.id}
+                position={[
+                  bus.lat,
+                  bus.lng
+                ]}
+                icon={
+                  createBusIcon()
+                }
+              >
+
+                <Popup>
+
+                  <div
+                    style={{
+                      minWidth:
+                        "150px"
+                    }}
+                  >
+
+                    <strong
+                      style={{
+                        display:
+                          "block",
+                        fontSize:
+                          "13px",
+                        marginBottom:
+                          "5px"
+                      }}
+                    >
+                      {bus.id}
+                    </strong>
+
+
+                    <div
+                      style={{
+                        fontSize:
+                          "11px"
+                      }}
+                    >
+                      Route:{" "}
+                      {bus.route}
+                    </div>
+
+
+                    <div
+                      style={{
+                        fontSize:
+                          "11px"
+                      }}
+                    >
+                      Speed:{" "}
+                      {bus.speed} km/h
+                    </div>
+
+
+                    <div
+                      style={{
+                        fontSize:
+                          "11px"
+                      }}
+                    >
+                      Events:{" "}
+                      {bus.events}
+                    </div>
+
+
+                    <div
+                      style={{
+                        fontSize:
+                          "11px"
+                      }}
+                    >
+                      Status:{" "}
+                      {bus.state}
+                    </div>
+
+                  </div>
+
+                </Popup>
+
+              </Marker>
+
+            )
+          )}
+
 
         <FlyTo
           target={
             selected
-              ? [selected.lat, selected.lng]
+              ? [
+                  selected.lat,
+                  selected.lng
+                ]
               : null
           }
         />
 
       </MapContainer>
 
-      <div className="map-overlay top-left">
+
+      {/* ------------------------------------------------------
+          MAP TITLE
+      ------------------------------------------------------ */}
+
+      <div
+        className="map-overlay top-left"
+      >
 
         <div className="map-title">
 
@@ -622,41 +1130,76 @@ function MapPanel({
 
           </div>
 
+
           <Badge tone="live">
-            <CircleDot size={10} />
+
+            <CircleDot
+              size={10}
+            />
+
             LIVE
+
           </Badge>
 
         </div>
 
       </div>
 
-      <div className="map-overlay top-right">
+
+      {/* ------------------------------------------------------
+          MAP CONTROLS
+      ------------------------------------------------------ */}
+
+      <div
+        className="map-overlay top-right"
+      >
 
         <button
           type="button"
           className="map-control"
         >
-          <Layers3 size={16} />
+
+          <Layers3
+            size={16}
+          />
+
           Layers
+
         </button>
+
 
         <button
           type="button"
           className="map-control"
           onClick={() => {
+
             window.dispatchEvent(
-              new CustomEvent("codyssey-recenter")
+              new CustomEvent(
+                "codyssey-recenter"
+              )
             );
+
           }}
         >
-          <Crosshair size={16} />
+
+          <Crosshair
+            size={16}
+          />
+
           Recenter
+
         </button>
 
       </div>
 
-      <div className="map-overlay bottom-left legend">
+
+      {/* ------------------------------------------------------
+          MAP LEGEND
+      ------------------------------------------------------ */}
+
+      <div
+        className="map-overlay bottom-left legend"
+      >
 
         <div>
           <i className="dot high" />
@@ -678,62 +1221,124 @@ function MapPanel({
           Sensing corridor
         </div>
 
+        {emergencyEvent && (
+
+          <div>
+            <i
+              className="dot"
+              style={{
+                background:
+                  "#ff3030"
+              }}
+            />
+            Emergency corridor
+          </div>
+
+        )}
+
       </div>
 
+
+      {/* ------------------------------------------------------
+          SELECTED EVENT
+      ------------------------------------------------------ */}
+
       {selected && (
+
         <div className="event-popover">
 
           <button
             type="button"
-            onClick={() => setSelected(null)}
+            onClick={() =>
+              setSelected(
+                null
+              )
+            }
           >
             <X size={15} />
           </button>
+
 
           <span className="eyebrow">
             {selected.id}
           </span>
 
+
           <h3>
             {selected.type}
           </h3>
 
+
           <p>
-            <MapPin size={14} />
+
+            <MapPin
+              size={14}
+            />
+
             {selected.location}
+
           </p>
+
 
           <div className="popover-grid">
 
             <div>
-              <small>Confidence</small>
+
+              <small>
+                Confidence
+              </small>
+
               <strong>
-                {Math.round(selected.confidence * 100)}%
+                {Math.round(
+                  selected.confidence *
+                  100
+                )}
+                %
               </strong>
+
             </div>
 
+
             <div>
-              <small>Bus</small>
+
+              <small>
+                Bus
+              </small>
+
               <strong>
                 {selected.bus}
               </strong>
+
             </div>
 
+
             <div>
-              <small>Severity</small>
+
+              <small>
+                Severity
+              </small>
+
               <strong>
                 {selected.severity}
               </strong>
+
             </div>
 
+
             <div>
-              <small>Priority</small>
+
+              <small>
+                Priority
+              </small>
+
               <strong>
                 {selected.priority}
               </strong>
+
             </div>
 
           </div>
+
 
           <Badge
             tone={
@@ -742,12 +1347,15 @@ function MapPanel({
                 : "review"
             }
           >
+
             {selected.buses >= 2
               ? "CROSS-BUS VERIFIED"
               : "SINGLE BUS OBSERVATION"}
+
           </Badge>
 
         </div>
+
       )}
 
     </div>
@@ -761,6 +1369,10 @@ function MapPanel({
 
 function App() {
 
+  // ==========================================================
+  // STATE
+  // ==========================================================
+
   const [
     active,
     setActive
@@ -768,118 +1380,161 @@ function App() {
     "Command Center"
   );
 
+
   const [
     filter,
     setFilter
-  ] = useState("All");
+  ] = useState(
+    "All"
+  );
+
 
   const [
     selected,
     setSelected
-  ] = useState(null);
+  ] = useState(
+    null
+  );
+
 
   const [
     showBuses,
     setShowBuses
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
-  const [
-    emergency,
-    setEmergency
-  ] = useState(false);
 
   const [
     dark,
     setDark
-  ] = useState(true);
+  ] = useState(
+    true
+  );
+
 
   const [
     alerts,
     setAlerts
-  ] = useState([]);
+  ] = useState(
+    []
+  );
+
 
   const [
     backendOnline,
     setBackendOnline
-  ] = useState(false);
+  ] = useState(
+    false
+  );
+
 
   const [
     loading,
     setLoading
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
 
-  // ========================================================
+  // ==========================================================
   // FETCH ALERTS
-  // ========================================================
+  // ==========================================================
 
-  const fetchAlerts = async () => {
+  const fetchAlerts =
+    async () => {
 
-    try {
+      try {
 
-      const response =
-        await fetch(
-          `${API_URL}/alerts`
+        const response =
+          await fetch(
+            `${API_URL}/alerts`
+          );
+
+
+        if (
+          !response.ok
+        ) {
+
+          throw new Error(
+            "Backend request failed"
+          );
+        }
+
+
+        const data =
+          await response.json();
+
+
+        const backendAlerts =
+          Array.isArray(data)
+            ? data
+            : (
+                data.alerts ||
+                []
+              );
+
+
+        const converted =
+          backendAlerts
+            .map(
+              convertBackendAlert
+            )
+            .reverse();
+
+
+        setAlerts(
+          converted
         );
 
-      if (!response.ok) {
-        throw new Error(
-          "Backend request failed"
+
+        setBackendOnline(
+          true
         );
+
+
+        setLoading(
+          false
+        );
+
       }
 
-      const data =
-        await response.json();
+      catch (error) {
 
-      const backendAlerts =
-        Array.isArray(data)
-          ? data
-          : data.alerts || [];
-
-      const converted =
-        backendAlerts
-          .map(
-            convertBackendAlert
-          )
-          .reverse();
-
-      setAlerts(
-        converted
-      );
-
-      setBackendOnline(true);
-
-      setLoading(false);
-
-    } catch (error) {
-
-      console.error(
-        "Backend connection error:",
-        error
-      );
-
-      setBackendOnline(false);
-
-      setLoading(false);
-
-    }
-
-  };
+        console.error(
+          "Backend connection error:",
+          error
+        );
 
 
-  // ========================================================
+        setBackendOnline(
+          false
+        );
+
+
+        setLoading(
+          false
+        );
+
+      }
+    };
+
+
+  // ==========================================================
   // LIVE POLLING
-  // ========================================================
+  // ==========================================================
 
   useEffect(() => {
 
     fetchAlerts();
+
 
     const interval =
       setInterval(
         fetchAlerts,
         2000
       );
+
 
     return () =>
       clearInterval(
@@ -889,110 +1544,209 @@ function App() {
   }, []);
 
 
-  // ========================================================
+  // ==========================================================
   // FILTER
-  // ========================================================
+  // ==========================================================
 
-  const filtered = useMemo(() => {
+  const filtered =
+    useMemo(() => {
 
-    if (filter === "All") {
-      return alerts;
-    }
+      if (
+        filter === "All"
+      ) {
 
-    const mapping = {
-      Road: "road",
-      Traffic: "traffic",
-      Infrastructure:
-        "infrastructure",
-      Unsafe: "unsafe"
-    };
+        return alerts;
+      }
 
-    return alerts.filter(
-      event =>
-        event.category ===
-        mapping[filter]
+
+      const mapping = {
+
+        Road:
+          "road",
+
+        Traffic:
+          "traffic",
+
+        Infrastructure:
+          "infrastructure",
+
+        Unsafe:
+          "unsafe"
+
+      };
+
+
+      return alerts.filter(
+        event =>
+          event.category ===
+          mapping[filter]
+      );
+
+    }, [
+      alerts,
+      filter
+    ]);
+
+
+  // ==========================================================
+  // AUTOMATIC EMERGENCY EVENT
+  // ==========================================================
+  //
+  // IMPORTANT:
+  //
+  // There is NO setEmergency().
+  //
+  // Emergency state is derived directly
+  // from the AI-generated backend alert.
+  //
+  // ==========================================================
+
+  const emergencyEvent =
+    useMemo(() => {
+
+      return (
+        alerts.find(
+          event =>
+            event.category ===
+            "emergency"
+        ) || null
+      );
+
+    }, [
+      alerts
+    ]);
+
+
+  const emergency =
+    Boolean(
+      emergencyEvent
     );
 
-  }, [
-    alerts,
-    filter
-  ]);
 
-
-  // ========================================================
+  // ==========================================================
   // STATISTICS
-  // ========================================================
+  // ==========================================================
 
   const activeIncidents =
     alerts.length;
 
+
   const verifiedEvents =
     alerts.filter(
       event =>
-        event.priority >= 80
+        event.priority >=
+        80
     ).length;
+
 
   const trafficEvents =
     alerts.filter(
       event =>
-        event.category === "traffic"
+        event.category ===
+        "traffic"
     ).length;
+
+
+  const emergencyEvents =
+    alerts.filter(
+      event =>
+        event.category ===
+        "emergency"
+    ).length;
+
 
   const averageConfidence =
     alerts.length
       ? Math.round(
           alerts.reduce(
-            (sum, event) =>
+            (
+              sum,
+              event
+            ) =>
               sum +
               event.confidence,
             0
           ) /
-            alerts.length *
-            100
+          alerts.length *
+          100
         )
       : 0;
 
 
-  // ========================================================
-  // NAV
-  // ========================================================
+  // ==========================================================
+  // NAVIGATION
+  // ==========================================================
 
   const nav = [
-    ["Command Center", Activity],
-    ["City Map", MapPin],
-    ["Incidents", AlertTriangle],
-    ["Fleet", BusFront],
-    ["Emergency", Ambulance],
-    ["Analytics", Gauge]
+
+    [
+      "Command Center",
+      Activity
+    ],
+
+    [
+      "City Map",
+      MapPin
+    ],
+
+    [
+      "Incidents",
+      AlertTriangle
+    ],
+
+    [
+      "Fleet",
+      BusFront
+    ],
+
+    [
+      "Emergency",
+      Ambulance
+    ],
+
+    [
+      "Analytics",
+      Gauge
+    ]
+
   ];
 
 
-  // ========================================================
+  // ==========================================================
   // UI
-  // ========================================================
+  // ==========================================================
 
   return (
 
     <div
       className={
         "app " +
-        (dark
-          ? "dark"
-          : "light")
+        (
+          dark
+            ? "dark"
+            : "light"
+        )
       }
     >
 
-      {/* ==================================================
+
+      {/* ======================================================
           SIDEBAR
-      ================================================== */}
+      ====================================================== */}
 
       <aside className="sidebar">
+
 
         <div className="brand">
 
           <div className="brand-mark">
-            <Route size={23} />
+
+            <Route
+              size={23}
+            />
+
           </div>
+
 
           <div>
 
@@ -1009,38 +1763,50 @@ function App() {
         </div>
 
 
+        {/* SYSTEM STATUS */}
+
         <div className="system-state">
 
-          <span
-            className="pulse"
-          />
+          <span className="pulse" />
+
 
           <div>
 
             <strong>
+
               {backendOnline
                 ? "NETWORK ONLINE"
                 : "BACKEND OFFLINE"}
+
             </strong>
 
+
             <small>
+
               {backendOnline
                 ? "Edge fleet synchronized"
                 : "Waiting for FastAPI"}
+
             </small>
 
           </div>
 
-          <Wifi size={15} />
+
+          <Wifi
+            size={15}
+          />
 
         </div>
 
+
+        {/* NAV */}
 
         <nav>
 
           <span className="nav-label">
             OPERATIONS
           </span>
+
 
           {nav.map(
             ([label, Icon]) => (
@@ -1050,21 +1816,28 @@ function App() {
                 className={
                   "nav-item " +
                   (
-                    active === label
+                    active ===
+                    label
                       ? "active"
                       : ""
                   )
                 }
                 onClick={() =>
-                  setActive(label)
+                  setActive(
+                    label
+                  )
                 }
               >
 
-                <Icon size={18} />
+                <Icon
+                  size={18}
+                />
+
 
                 <span>
                   {label}
                 </span>
+
 
                 {label ===
                   "Incidents" && (
@@ -1075,11 +1848,26 @@ function App() {
 
                 )}
 
-                {active === label && (
+
+                {label ===
+                  "Emergency" &&
+                  emergency && (
+
+                  <b>
+                    1
+                  </b>
+
+                )}
+
+
+                {active ===
+                  label && (
 
                   <ChevronRight
                     size={15}
-                    className="nav-chevron"
+                    className={
+                      "nav-chevron"
+                    }
                   />
 
                 )}
@@ -1092,7 +1880,10 @@ function App() {
         </nav>
 
 
+        {/* SIDEBAR BOTTOM */}
+
         <div className="sidebar-bottom">
+
 
           <div className="coverage">
 
@@ -1108,15 +1899,18 @@ function App() {
 
             </div>
 
+
             <div className="progress">
 
               <i
                 style={{
-                  width: "78%"
+                  width:
+                    "78%"
                 }}
               />
 
             </div>
+
 
             <small>
               42 sensing buses active
@@ -1131,6 +1925,7 @@ function App() {
               CI
             </div>
 
+
             <div>
 
               <strong>
@@ -1143,6 +1938,7 @@ function App() {
 
             </div>
 
+
             <ChevronRight
               size={15}
             />
@@ -1154,19 +1950,23 @@ function App() {
       </aside>
 
 
-      {/* ==================================================
+      {/* ======================================================
           MAIN
-      ================================================== */}
+      ====================================================== */}
 
       <main className="main">
+
 
         {/* TOP BAR */}
 
         <header className="topbar">
 
+
           <div className="mobile-brand">
 
-            <Route size={20} />
+            <Route
+              size={20}
+            />
 
             CODYSSEY
 
@@ -1179,12 +1979,16 @@ function App() {
               OPERATIONS
             </span>
 
+
             <ChevronRight
               size={13}
             />
 
+
             <strong>
-              {active.toUpperCase()}
+              {
+                active.toUpperCase()
+              }
             </strong>
 
           </div>
@@ -1192,11 +1996,13 @@ function App() {
 
           <div className="top-actions">
 
+
             <div className="search">
 
               <Search
                 size={16}
               />
+
 
               <input
                 placeholder={
@@ -1210,22 +2016,36 @@ function App() {
             <button
               className="icon-btn"
             >
-              <Bell size={18} />
+
+              <Bell
+                size={18}
+              />
+
               <i />
+
             </button>
 
 
             <button
               className="icon-btn"
               onClick={() =>
-                setDark(!dark)
+                setDark(
+                  !dark
+                )
               }
             >
 
               {dark
-                ? <Sun size={18} />
-                : <Moon size={18} />
-              }
+                ? (
+                  <Sun
+                    size={18}
+                  />
+                )
+                : (
+                  <Moon
+                    size={18}
+                  />
+                )}
 
             </button>
 
@@ -1236,9 +2056,13 @@ function App() {
 
         <section className="content">
 
-          {/* HERO */}
+
+          {/* ==================================================
+              HERO
+          ================================================== */}
 
           <div className="hero">
+
 
             <div>
 
@@ -1246,19 +2070,26 @@ function App() {
                 LIVE · CODYSSEY EDGE NETWORK
               </span>
 
+
               <h1>
+
                 City intelligence,{" "}
+
                 <em>
                   in motion.
                 </em>
+
               </h1>
 
+
               <p>
+
                 Every bus becomes a mobile
                 sensor. Detect locally, verify
                 across the fleet, and turn road
                 activity into actionable
                 intelligence.
+
               </p>
 
             </div>
@@ -1266,9 +2097,15 @@ function App() {
 
             <div className="hero-actions">
 
-              <button className="secondary-btn">
 
-                <Radio size={16} />
+              <button
+                className="secondary-btn"
+              >
+
+                <Radio
+                  size={16}
+                />
+
 
                 {backendOnline
                   ? "Edge network online"
@@ -1276,9 +2113,12 @@ function App() {
 
               </button>
 
+
               <button
                 className="primary-btn"
-                onClick={fetchAlerts}
+                onClick={
+                  fetchAlerts
+                }
               >
 
                 <Sparkles
@@ -1294,12 +2134,17 @@ function App() {
           </div>
 
 
-          {/* STATS */}
+          {/* ==================================================
+              STATS
+          ================================================== */}
 
           <div className="stats-grid">
 
+
             <Stat
-              icon={AlertTriangle}
+              icon={
+                AlertTriangle
+              }
               label="Active incidents"
               value={
                 activeIncidents
@@ -1312,16 +2157,22 @@ function App() {
               tone="pink"
             />
 
+
             <Stat
-              icon={BusFront}
+              icon={
+                BusFront
+              }
               label="Sensing fleet"
               value="42 / 48"
               detail="87.5% online"
               tone="cyan"
             />
 
+
             <Stat
-              icon={Car}
+              icon={
+                Car
+              }
               label="Traffic events"
               value={
                 trafficEvents
@@ -1334,8 +2185,11 @@ function App() {
               tone="amber"
             />
 
+
             <Stat
-              icon={CheckCircle2}
+              icon={
+                CheckCircle2
+              }
               label="Avg confidence"
               value={
                 `${averageConfidence}%`
@@ -1349,25 +2203,38 @@ function App() {
           </div>
 
 
-          {/* WORKSPACE */}
+          {/* ==================================================
+              WORKSPACE
+          ================================================== */}
 
           <div className="workspace">
+
+
+            {/* MAP */}
 
             <section className="map-card">
 
               <MapPanel
-                events={alerts}
-                selected={selected}
+                events={
+                  alerts
+                }
+                selected={
+                  selected
+                }
                 setSelected={
                   setSelected
                 }
                 showBuses={
                   showBuses
                 }
+                emergencyEvent={
+                  emergencyEvent
+                }
               />
 
 
               <div className="map-footer">
+
 
                 <div className="map-metric">
 
@@ -1435,13 +2302,19 @@ function App() {
             </section>
 
 
-            {/* RIGHT RAIL */}
+            {/* =================================================
+                RIGHT RAIL
+            ================================================= */}
 
             <aside className="right-rail">
 
-              {/* EMERGENCY */}
+
+              {/* ===============================================
+                  EMERGENCY
+              =============================================== */}
 
               <div className="panel emergency-panel">
+
 
                 <div className="panel-head">
 
@@ -1457,10 +2330,17 @@ function App() {
 
                   </div>
 
-                  <Siren size={18} />
+
+                  <Siren
+                    size={18}
+                  />
 
                 </div>
 
+
+                {/* ---------------------------------------------
+                    AUTOMATIC EMERGENCY STATUS
+                --------------------------------------------- */}
 
                 <div
                   className={
@@ -1473,6 +2353,7 @@ function App() {
                   }
                 >
 
+
                   <div className="siren-icon">
 
                     <Ambulance
@@ -1480,6 +2361,7 @@ function App() {
                     />
 
                   </div>
+
 
                   <div>
 
@@ -1491,11 +2373,19 @@ function App() {
 
                     </strong>
 
+
                     <small>
 
                       {emergency
-                        ? "AI + GPS emergency detection"
-                        : "Monitoring all sensing buses"}
+                        ? `AI confidence ${
+                            Math.round(
+                              emergencyEvent.confidence *
+                              100
+                            )
+                          }% · ${
+                            emergencyEvent.bus
+                          }`
+                        : "AI monitoring all sensing buses"}
 
                     </small>
 
@@ -1504,13 +2394,22 @@ function App() {
                 </div>
 
 
+                {/* ---------------------------------------------
+                    AUTOMATIC CORRIDOR
+                --------------------------------------------- */}
+
                 {emergency && (
 
                   <>
 
-                    <div className="corridor">
+                    <div
+                      className="corridor"
+                    >
 
-                      <div className="corridor-line">
+
+                      <div
+                        className="corridor-line"
+                      >
 
                         <i />
                         <i />
@@ -1519,35 +2418,63 @@ function App() {
                         <i />
 
                       </div>
+
 
                       <div>
 
                         <small>
-                          Current
+                          AI-generated priority route
                         </small>
 
                         <strong>
-                          Richmond →
-                          Hosur Road
+                          Emergency vehicle → Destination
                         </strong>
 
                       </div>
 
-                      <Badge tone="verified">
+
+                      <Badge
+                        tone="verified"
+                      >
                         4 SIGNALS
                       </Badge>
 
                     </div>
 
 
-                    <button
+                    {/* NO BUTTON.
+                        THIS IS SYSTEM OUTPUT. */}
+
+                    <div
                       className="wide-btn"
-                      onClick={() =>
-                        setEmergency(false)
-                      }
+                      style={{
+                        cursor:
+                          "default"
+                      }}
                     >
-                      Simulate signal priority
-                    </button>
+
+                      🚦 SIGNAL PRIORITY REQUESTED
+
+                    </div>
+
+
+                    <div
+                      style={{
+                        marginTop:
+                          "8px",
+                        fontSize:
+                          "10px",
+                        color:
+                          "var(--muted)"
+                      }}
+                    >
+
+                      AI detection →
+                      GPS location →
+                      priority engine →
+                      corridor generation
+
+                    </div>
 
                   </>
 
@@ -1556,11 +2483,17 @@ function App() {
               </div>
 
 
-              {/* FLEET */}
+              {/* ===============================================
+                  FLEET
+              =============================================== */}
 
-              <div className="panel fleet-panel">
+              <div
+                className="panel fleet-panel"
+              >
 
-                <div className="panel-head">
+                <div
+                  className="panel-head"
+                >
 
                   <div>
 
@@ -1574,103 +2507,158 @@ function App() {
 
                   </div>
 
-                  <Badge tone="live">
+
+                  <Badge
+                    tone="live"
+                  >
                     42 ONLINE
                   </Badge>
 
                 </div>
 
 
-                <div className="fleet-list">
+                <div
+                  className="fleet-list"
+                >
 
                   {BUSES
                     .slice(0, 4)
-                    .map(bus => (
+                    .map(
+                      bus => (
 
-                    <button
-                      key={bus.id}
-                      className="fleet-row"
-                      onClick={() => {
+                        <button
+                          key={
+                            bus.id
+                          }
+                          className="fleet-row"
+                          onClick={() => {
 
-                        const event =
-                          alerts.find(
-                            item =>
-                              item.bus ===
-                              bus.id
-                          );
-
-                        if (event) {
-                          setSelected(
-                            event
-                          );
-                        }
-
-                      }}
-                    >
-
-                      <div className="bus-icon">
-
-                        <BusFront
-                          size={16}
-                        />
-
-                      </div>
+                            const event =
+                              alerts.find(
+                                item =>
+                                  item.bus ===
+                                  bus.id
+                              );
 
 
-                      <div className="fleet-main">
+                            if (
+                              event
+                            ) {
 
-                        <strong>
-                          {bus.id}
-                        </strong>
+                              setSelected(
+                                event
+                              );
 
-                        <span>
-                          Route {bus.route}
-                          {" · "}
-                          {bus.speed} km/h
-                        </span>
+                            }
 
-                      </div>
+                          }}
+                        >
+
+                          <div
+                            className="bus-icon"
+                          >
+
+                            <BusFront
+                              size={16}
+                            />
+
+                          </div>
 
 
-                      <div className="fleet-state">
+                          <div
+                            className="fleet-main"
+                          >
 
-                        <i />
+                            <strong>
+                              {bus.id}
+                            </strong>
 
-                        {bus.events}
-                        {" "}events
+                            <span>
+                              Route{" "}
+                              {bus.route}
+                              {" · "}
+                              {bus.speed}
+                              {" "}
+                              km/h
+                            </span>
 
-                      </div>
+                          </div>
 
-                    </button>
 
-                  ))}
+                          <div
+                            className="fleet-state"
+                          >
+
+                            <i />
+
+                            {bus.events}
+                            {" "}
+                            events
+
+                          </div>
+
+                        </button>
+
+                      )
+                    )}
 
                 </div>
 
               </div>
 
 
-              {/* INSIGHT */}
+              {/* ===============================================
+                  AI INSIGHT
+              =============================================== */}
 
-              <div className="panel insight-panel">
+              <div
+                className="panel insight-panel"
+              >
 
-                <div className="insight-icon">
+                <div
+                  className="insight-icon"
+                >
 
-                  <Zap size={17} />
+                  <Zap
+                    size={17}
+                  />
 
                 </div>
 
+
                 <div>
 
-                  <span className="eyebrow">
+                  <span
+                    className="eyebrow"
+                  >
                     AI INSIGHT
                   </span>
 
+
                   <p>
 
-                    {trafficEvents > 0
-                      ? `${trafficEvents} traffic event(s) are currently being reported by the sensing fleet.`
-                      : "The sensing fleet is monitoring the road network for traffic anomalies."}
+                    {emergency
+
+                      ? (
+                        <>
+                          <strong>
+                            Emergency vehicle
+                            detected.
+                          </strong>{" "}
+                          AI has generated a
+                          priority corridor
+                          using the detected
+                          vehicle location.
+                        </>
+                      )
+
+                      : trafficEvents > 0
+
+                        ? `${trafficEvents} traffic event(s) are currently being reported by the sensing fleet.`
+
+                        : "The sensing fleet is monitoring the road network for traffic anomalies."
+
+                    }
 
                   </p>
 
@@ -1683,11 +2671,18 @@ function App() {
           </div>
 
 
-          {/* EVENTS */}
+          {/* ==================================================
+              EVENTS
+          ================================================== */}
 
-          <section className="panel events-panel">
+          <section
+            className="panel events-panel"
+          >
 
-            <div className="panel-head event-head">
+
+            <div
+              className="panel-head event-head"
+            >
 
               <div>
 
@@ -1702,7 +2697,9 @@ function App() {
               </div>
 
 
-              <div className="filter-row">
+              <div
+                className="filter-row"
+              >
 
                 {[
                   "All",
@@ -1714,7 +2711,9 @@ function App() {
                   category => (
 
                     <button
-                      key={category}
+                      key={
+                        category
+                      }
                       className={
                         filter ===
                         category
@@ -1727,7 +2726,9 @@ function App() {
                         )
                       }
                     >
+
                       {category}
+
                     </button>
 
                   )
@@ -1738,9 +2739,14 @@ function App() {
             </div>
 
 
-            <div className="events-table">
+            <div
+              className="events-table"
+            >
 
-              <div className="table-row table-header">
+
+              <div
+                className="table-row table-header"
+              >
 
                 <span>
                   EVENT
@@ -1772,25 +2778,32 @@ function App() {
                 <div
                   className="table-row"
                   style={{
-                    display: "block",
-                    color: "var(--muted)"
+                    display:
+                      "block",
+                    color:
+                      "var(--muted)"
                   }}
                 >
-                  Connecting to CODYSSEY
-                  backend...
+
+                  Connecting to
+                  CODYSSEY backend...
+
                 </div>
 
               )}
 
 
               {!loading &&
-                filtered.length === 0 && (
+                filtered.length ===
+                  0 && (
 
                 <div
                   className="table-row"
                   style={{
-                    display: "block",
-                    color: "var(--muted)"
+                    display:
+                      "block",
+                    color:
+                      "var(--muted)"
                   }}
                 >
 
@@ -1803,157 +2816,218 @@ function App() {
               )}
 
 
-              {filtered.map(event => {
+              {filtered.map(
+                event => {
 
-                const Icon =
-                  ICONS[
-                    event.category
-                  ] ||
-                  AlertTriangle;
+                  const Icon =
+                    ICONS[
+                      event.category
+                    ] ||
+                    AlertTriangle;
 
-                return (
 
-                  <button
-                    className={
-                      "table-row event-row " +
-                      (
-                        selected?.id ===
+                  return (
+
+                    <button
+                      className={
+                        "table-row event-row " +
+                        (
+                          selected?.id ===
+                          event.id
+                            ? "selected-row"
+                            : ""
+                        )
+                      }
+                      key={
                         event.id
-                          ? "selected-row"
-                          : ""
-                      )
-                    }
+                      }
+                      onClick={() =>
+                        setSelected(
+                          event
+                        )
+                      }
+                    >
 
-                    key={event.id}
 
-                    onClick={() =>
-                      setSelected(
-                        event
-                      )
-                    }
-                  >
+                      {/* EVENT */}
 
-                    <span className="event-name">
-
-                      <div
-                        className={
-                          "event-icon " +
-                          event.category
-                        }
+                      <span
+                        className="event-name"
                       >
 
-                        <Icon
+                        <div
+                          className={
+                            "event-icon " +
+                            event.category
+                          }
+                        >
+
+                          <Icon
+                            size={16}
+                          />
+
+                        </div>
+
+
+                        <div>
+
+                          <strong>
+
+                            {event.type}
+
+                          </strong>
+
+
+                          <small>
+
+                            {event.id}
+                            {" · "}
+                            {event.time}
+
+                          </small>
+
+                        </div>
+
+                      </span>
+
+
+                      {/* LOCATION */}
+
+                      <span
+                        className="location-cell"
+                      >
+
+                        <MapPin
+                          size={14}
+                        />
+
+                        {event.location}
+
+                      </span>
+
+
+                      {/* SOURCE */}
+
+                      <span
+                        className="source-cell"
+                      >
+
+                        {event.category ===
+                        "emergency"
+
+                          ? (
+                            <Ambulance
+                              size={14}
+                            />
+                          )
+
+                          : (
+                            <BusFront
+                              size={14}
+                            />
+                          )
+                        }
+
+
+                        {event.bus}
+
+
+                        <small>
+
+                          {event.category ===
+                          "emergency"
+                            ? "AI emergency detection"
+                            : "Live bus source"}
+
+                        </small>
+
+                      </span>
+
+
+                      {/* CONFIDENCE */}
+
+                      <span
+                        className="confidence"
+                      >
+
+                        <strong>
+
+                          {Math.round(
+                            event.confidence *
+                            100
+                          )}
+                          %
+
+                        </strong>
+
+
+                        <div
+                          className="confidence-bar"
+                        >
+
+                          <i
+                            style={{
+                              width:
+                                `${
+                                  event.confidence *
+                                  100
+                                }%`
+                            }}
+                          />
+
+                        </div>
+
+                      </span>
+
+
+                      {/* STATUS */}
+
+                      <span>
+
+                        <Badge
+                          tone={
+                            event.category ===
+                            "emergency"
+                              ? "verified"
+                              : event.priority >=
+                                80
+                                ? "verified"
+                                : "review"
+                          }
+                        >
+
+                          {event.category ===
+                          "emergency"
+                            ? "CRITICAL"
+                            : event.status}
+
+                        </Badge>
+
+                      </span>
+
+
+                      <span>
+
+                        <ChevronRight
                           size={16}
                         />
 
-                      </div>
+                      </span>
 
-                      <div>
+                    </button>
 
-                        <strong>
-                          {event.type}
-                        </strong>
-
-                        <small>
-                          {event.id}
-                          {" · "}
-                          {event.time}
-                        </small>
-
-                      </div>
-
-                    </span>
-
-
-                    <span className="location-cell">
-
-                      <MapPin
-                        size={14}
-                      />
-
-                      {event.location}
-
-                    </span>
-
-
-                    <span className="source-cell">
-
-                      <BusFront
-                        size={14}
-                      />
-
-                      {event.bus}
-
-                      <small>
-                        Live bus source
-                      </small>
-
-                    </span>
-
-
-                    <span className="confidence">
-
-                      <strong>
-                        {Math.round(
-                          event.confidence *
-                            100
-                        )}
-                        %
-                      </strong>
-
-                      <div className="confidence-bar">
-
-                        <i
-                          style={{
-                            width:
-                              `${
-                                event.confidence *
-                                100
-                              }%`
-                          }}
-                        />
-
-                      </div>
-
-                    </span>
-
-
-                    <span>
-
-                      <Badge
-                        tone={
-                          event.priority >=
-                          80
-                            ? "verified"
-                            : "review"
-                        }
-                      >
-                        {event.status}
-                      </Badge>
-
-                    </span>
-
-
-                    <span>
-
-                      <ChevronRight
-                        size={16}
-                      />
-
-                    </span>
-
-                  </button>
-
-                );
-
-              })}
+                  );
+                }
+              )}
 
             </div>
 
           </section>
 
 
-          {/* FOOTER */}
+          {/* ==================================================
+              FOOTER
+          ================================================== */}
 
           <footer>
 
@@ -1964,16 +3038,20 @@ function App() {
               />
 
               CODYSSEY edge network{" "}
+
               {backendOnline
                 ? "operational"
                 : "waiting for backend"}
 
             </span>
 
+
             <span>
+
               AI inference stays on-device
-              · Event metadata only ·
-              v1.0 prototype
+              · Event metadata only
+              · v1.0 prototype
+
             </span>
 
           </footer>
@@ -1992,9 +3070,15 @@ function App() {
 // ============================================================
 
 createRoot(
-  document.getElementById("root")
+  document.getElementById(
+    "root"
+  )
 ).render(
+
   <React.StrictMode>
+
     <App />
+
   </React.StrictMode>
+
 );

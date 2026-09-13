@@ -1,205 +1,597 @@
+import os
 import cv2
-import numpy as np
 import torch
+
 from ultralytics import YOLO
+from ultralytics import YOLOWorld
 
 
 class RoadDetector:
 
-    def __init__(self, model_path, pothole_model_path=None, imgsz=640, roi_points=None):
-        """
-        model_path: primary model (e.g. RAD / general road-anomaly model).
-        pothole_model_path: optional second, dedicated pothole model. If
-        given, every frame is run through BOTH models and their
-        detections are merged into a single list.
+    RAD_CLASS_EVENT_MAP = {
+        "HMV": "traffic",
+        "LMV": "traffic",
+        "Pedestrian": "traffic",
+        "RoadDamages": "road_damage",
+        "SpeedBump": "road_infrastructure",
+        "UnsurfacedRoad": "road_infrastructure",
+    }
 
-        roi_points: list of 4 (x_ratio, y_ratio) points defining a
-        trapezoid over the road area, as fractions of frame width/height,
-        in order: top-left, top-right, bottom-right, bottom-left.
+    EMERGENCY_CLASSES = [
+        "ambulance",
+        "emergency vehicle",
+        "police car",
+        "fire truck",
+    ]
 
-        Default assumes the road fills most of the lower frame and
-        narrows toward the horizon — matches a forward-facing bus/dashcam.
-        Tune these if your camera angle is different.
-        """
+    def __init__(
+        self,
+        rad_model_path,
+        pothole_model_path,
+        emergency_model_path=None,
+        imgsz=416,
+    ):
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {self.device}")
+        print("=" * 70)
+        print("CODYSSEY MULTI-MODEL AI DETECTOR")
+        print("=" * 70)
 
-        print(f"Loading model: {model_path}")
-        self.model = YOLO(model_path)
+        self.device = (
+            0
+            if torch.cuda.is_available()
+            else "cpu"
+        )
 
-        self.pothole_model = None
-
-        if pothole_model_path:
-            print(f"Loading pothole model: {pothole_model_path}")
-            self.pothole_model = YOLO(pothole_model_path)
+        print("Device:", self.device)
 
         self.imgsz = imgsz
 
-        self.roi_points = roi_points or [
-            (0.30, 0.42),  # top-left
-            (0.70, 0.42),  # top-right
-            (1.00, 1.00),  # bottom-right
-            (0.00, 1.00),  # bottom-left
-        ]
+        # ====================================================
+        # RAD MODEL
+        # ====================================================
 
-    def get_roi_polygon(self, frame_width, frame_height):
+        print("\nLoading RAD model...")
 
-        return np.array([
-            (int(x * frame_width), int(y * frame_height))
-            for x, y in self.roi_points
-        ], dtype=np.int32)
-
-    def brighten_shadows(self, frame, shadow_thresh=100, gamma=1.8):
-        """
-        Brightens ONLY the dark/shadow regions of the frame, leaving
-        well-lit areas untouched. This is far more targeted than global
-        CLAHE — it reveals pothole edges hidden in shadow without
-        washing out or blocking the rest of the image.
-        """
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
-        h, s, v = cv2.split(hsv)
-
-        # Mask of shadow pixels (low brightness)
-        shadow_mask = (v < shadow_thresh).astype(np.float32)
-
-        # Smooth the mask edges so the brightening blends naturally
-        shadow_mask = cv2.GaussianBlur(shadow_mask, (25, 25), 0)
-
-        # Gamma-brighten the V channel
-        v_norm = v / 255.0
-        v_gamma = np.power(v_norm, 1.0 / gamma) * 255.0
-
-        # Blend: only apply the brightened version where shadow_mask says so
-        v_result = (v * (1 - shadow_mask)) + (v_gamma * shadow_mask)
-        v_result = np.clip(v_result, 0, 255).astype(np.uint8)
-
-        hsv_result = cv2.merge((h.astype(np.uint8), s.astype(np.uint8), v_result))
-        corrected = cv2.cvtColor(hsv_result, cv2.COLOR_HSV2BGR)
-
-        return corrected
-
-    def is_in_roi(self, x1, y1, x2, y2, roi_polygon):
-        """
-        True if the detection's center point falls inside the road
-        trapezoid. This filters out trees/sky/roadside clutter even
-        when they're low or wide in the frame.
-        """
-
-        center_x = int((x1 + x2) / 2)
-        center_y = int((y1 + y2) / 2)
-
-        result = cv2.pointPolygonTest(
-            roi_polygon, (center_x, center_y), False
+        self.rad_model = YOLO(
+            rad_model_path
         )
 
-        return result >= 0
+        print(
+            "RAD classes:",
+            self.rad_model.names
+        )
 
-    def _run_model(self, model, processed_frame, conf, roi_polygon):
-        """Runs a single YOLO model and returns ROI-filtered detections."""
+        # ====================================================
+        # POTHOLE MODEL
+        # ====================================================
+
+        print("\nLoading pothole model...")
+
+        self.pothole_model = YOLO(
+            pothole_model_path
+        )
+
+        print(
+            "Pothole classes:",
+            self.pothole_model.names
+        )
+
+        # ====================================================
+        # EMERGENCY YOLO-WORLD
+        # ====================================================
+
+        print(
+            "\nLoading automatic emergency AI..."
+        )
+
+        try:
+
+            if (
+                emergency_model_path
+                and os.path.exists(
+                    emergency_model_path
+                )
+            ):
+
+                self.emergency_model = YOLOWorld(
+                    emergency_model_path
+                )
+
+            else:
+
+                self.emergency_model = YOLOWorld(
+                    "yolov8s-worldv2.pt"
+                )
+
+            self.emergency_model.set_classes(
+                self.EMERGENCY_CLASSES
+            )
+
+            print(
+                "Emergency classes:",
+                self.EMERGENCY_CLASSES
+            )
+
+            print(
+                "Emergency AI: ACTIVE"
+            )
+
+        except Exception as e:
+
+            print(
+                "\n[EMERGENCY AI ERROR]"
+            )
+
+            print(e)
+
+            self.emergency_model = None
+
+        print("\n" + "=" * 70)
+        print("CODYSSEY AI DETECTOR READY")
+        print("=" * 70)
+
+    # ========================================================
+    # DETECT
+    # ========================================================
+
+    def detect(self, frame):
+
+        if frame is None:
+            return []
 
         detections = []
 
-        results = model(
-            processed_frame,
-            conf=conf,
-            imgsz=self.imgsz,
-            device=self.device,
-            verbose=False
+        # ====================================================
+        # RAD
+        # ====================================================
+
+        try:
+
+            results = self.rad_model.predict(
+                frame,
+                imgsz=self.imgsz,
+                conf=0.35,
+                device=self.device,
+                verbose=False,
+            )
+
+            if results:
+
+                result = results[0]
+
+                if result.boxes is not None:
+
+                    for box in result.boxes:
+
+                        class_id = int(
+                            box.cls[0]
+                        )
+
+                        confidence = float(
+                            box.conf[0]
+                        )
+
+                        class_name = (
+                            self.rad_model
+                            .names[class_id]
+                        )
+
+                        event_type = (
+                            self.RAD_CLASS_EVENT_MAP
+                            .get(class_name)
+                        )
+
+                        if event_type is None:
+                            continue
+
+                        x1, y1, x2, y2 = (
+                            box.xyxy[0]
+                            .tolist()
+                        )
+
+                        detections.append({
+                            "event_type": event_type,
+                            "class_name": class_name,
+                            "class_id": class_id,
+                            "confidence": round(
+                                confidence,
+                                4
+                            ),
+                            "bbox": [
+                                int(x1),
+                                int(y1),
+                                int(x2),
+                                int(y2),
+                            ],
+                            "model": "rad",
+                        })
+
+        except Exception as e:
+
+            print(
+                "[RAD ERROR]",
+                e
+            )
+
+        # ====================================================
+        # POTHOLE
+        # ====================================================
+
+        try:
+
+            results = (
+                self.pothole_model.predict(
+                    frame,
+                    imgsz=self.imgsz,
+                    conf=0.20,
+                    device=self.device,
+                    verbose=False,
+                )
+            )
+
+            if results:
+
+                result = results[0]
+
+                if result.boxes is not None:
+
+                    for box in result.boxes:
+
+                        confidence = float(
+                            box.conf[0]
+                        )
+
+                        x1, y1, x2, y2 = (
+                            box.xyxy[0]
+                            .tolist()
+                        )
+
+                        detections.append({
+                            "event_type": "pothole",
+                            "class_name": "pothole",
+                            "class_id": 0,
+                            "confidence": round(
+                                confidence,
+                                4
+                            ),
+                            "bbox": [
+                                int(x1),
+                                int(y1),
+                                int(x2),
+                                int(y2),
+                            ],
+                            "model": "pothole",
+                        })
+
+        except Exception as e:
+
+            print(
+                "[POTHOLE ERROR]",
+                e
+            )
+
+        # ====================================================
+        # AUTOMATIC EMERGENCY DETECTION
+        # ====================================================
+
+        if self.emergency_model is not None:
+
+            try:
+
+                results = (
+                    self.emergency_model.predict(
+                        frame,
+                        imgsz=self.imgsz,
+                        conf=0.35,
+                        device=self.device,
+                        verbose=False,
+                    )
+                )
+
+                if results:
+
+                    result = results[0]
+
+                    if result.boxes is not None:
+
+                        for box in result.boxes:
+
+                            class_id = int(
+                                box.cls[0]
+                            )
+
+                            confidence = float(
+                                box.conf[0]
+                            )
+
+                            class_name = str(
+                                self.emergency_model
+                                .names[class_id]
+                            )
+
+                            x1, y1, x2, y2 = (
+                                box.xyxy[0]
+                                .tolist()
+                            )
+
+                            detections.append({
+                                "event_type": "emergency",
+                                "class_name": class_name,
+                                "class_id": class_id,
+                                "confidence": round(
+                                    confidence,
+                                    4
+                                ),
+                                "bbox": [
+                                    int(x1),
+                                    int(y1),
+                                    int(x2),
+                                    int(y2),
+                                ],
+                                "model": "yolo_world_emergency",
+                            })
+
+            except Exception as e:
+
+                print(
+                    "[EMERGENCY AI ERROR]",
+                    e
+                )
+
+        return detections
+
+    # ========================================================
+    # TRAFFIC
+    # ========================================================
+
+    def count_traffic(
+        self,
+        detections
+    ):
+
+        result = {
+            "vehicle_count": 0,
+            "hmv_count": 0,
+            "lmv_count": 0,
+            "pedestrian_count": 0,
+        }
+
+        for detection in detections:
+
+            class_name = detection.get(
+                "class_name"
+            )
+
+            if class_name == "HMV":
+
+                result["hmv_count"] += 1
+
+            elif class_name == "LMV":
+
+                result["lmv_count"] += 1
+
+            elif class_name == "Pedestrian":
+
+                result[
+                    "pedestrian_count"
+                ] += 1
+
+        result["vehicle_count"] = (
+            result["hmv_count"]
+            + result["lmv_count"]
         )
 
-        for result in results:
+        return result
 
-            if result.boxes is None:
+    # ========================================================
+    # TRAFFIC INDEX
+    # ========================================================
+
+    def calculate_traffic_index(
+        self,
+        detections,
+        frame_width=640,
+        frame_height=640,
+    ):
+
+        vehicle_count = 0
+        pedestrian_count = 0
+
+        for detection in detections:
+
+            class_name = detection.get(
+                "class_name"
+            )
+
+            if class_name in {
+                "HMV",
+                "LMV",
+            }:
+
+                vehicle_count += 1
+
+            elif class_name == "Pedestrian":
+
+                pedestrian_count += 1
+
+        vehicle_score = min(
+            vehicle_count * 12,
+            80
+        )
+
+        pedestrian_score = min(
+            pedestrian_count * 5,
+            20
+        )
+
+        return min(
+            int(
+                vehicle_score
+                + pedestrian_score
+            ),
+            100
+        )
+
+    # ========================================================
+    # EVENT HELPERS
+    # ========================================================
+
+    def is_road_event(
+        self,
+        detection
+    ):
+
+        return detection.get(
+            "event_type"
+        ) in {
+            "road_damage",
+            "pothole",
+            "road_infrastructure",
+        }
+
+    def is_traffic_event(
+        self,
+        detection
+    ):
+
+        return (
+            detection.get(
+                "event_type"
+            )
+            == "traffic"
+        )
+
+    def is_emergency_event(
+        self,
+        detection
+    ):
+
+        return (
+            detection.get(
+                "event_type"
+            )
+            == "emergency"
+        )
+
+    # ========================================================
+    # DRAW
+    # ========================================================
+
+    def draw_detections(
+        self,
+        frame,
+        detections
+    ):
+
+        if frame is None:
+            return frame
+
+        for detection in detections:
+
+            bbox = detection.get(
+                "bbox"
+            )
+
+            if not bbox:
                 continue
 
-            for box in result.boxes:
+            x1, y1, x2, y2 = bbox
 
-                confidence = float(box.conf[0])
-                class_id = int(box.cls[0])
-                class_name = result.names[class_id]
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-
-                if not self.is_in_roi(x1, y1, x2, y2, roi_polygon):
-                    continue
-
-                detections.append({
-                    "event_type": class_name,
-                    "confidence": confidence,
-                    "bbox": [int(x1), int(y1), int(x2), int(y2)]
-                })
-
-        return detections
-
-    def detect(self, frame, conf=0.15):
-        """
-        Runs inference on a shadow-corrected COPY of the frame, through
-        the primary model and (if configured) the pothole model, then
-        merges both sets of detections. The original 'frame' is never
-        modified — it stays full quality for display.
-        """
-
-        frame_height, frame_width = frame.shape[:2]
-        roi_polygon = self.get_roi_polygon(frame_width, frame_height)
-
-        processed_frame = self.brighten_shadows(frame)
-
-        detections = self._run_model(
-            self.model, processed_frame, conf, roi_polygon
-        )
-
-        if self.pothole_model is not None:
-
-            detections += self._run_model(
-                self.pothole_model, processed_frame, conf, roi_polygon
+            event_type = detection.get(
+                "event_type",
+                "unknown"
             )
 
-        return detections
-
-    def draw_detections(self, frame, detections):
-        """Draws boxes on the ORIGINAL full-quality frame."""
-
-        for det in detections:
-
-            x1, y1, x2, y2 = det["bbox"]
-            label = f'{det["event_type"]} {det["confidence"]:.2f}'
-
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-
-            (text_w, text_h), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+            class_name = detection.get(
+                "class_name",
+                "unknown"
             )
+
+            confidence = float(
+                detection.get(
+                    "confidence",
+                    0
+                )
+            )
+
+            if event_type == "emergency":
+
+                color = (
+                    0,
+                    0,
+                    255
+                )
+
+                label = (
+                    f"EMERGENCY: "
+                    f"{class_name} "
+                    f"{confidence:.0%}"
+                )
+
+            elif event_type in {
+                "pothole",
+                "road_damage",
+            }:
+
+                color = (
+                    0,
+                    165,
+                    255
+                )
+
+                label = (
+                    f"{class_name} "
+                    f"{confidence:.0%}"
+                )
+
+            elif event_type == "traffic":
+
+                color = (
+                    255,
+                    200,
+                    0
+                )
+
+                label = (
+                    f"{class_name} "
+                    f"{confidence:.0%}"
+                )
+
+            else:
+
+                color = (
+                    0,
+                    255,
+                    0
+                )
+
+                label = (
+                    f"{class_name} "
+                    f"{confidence:.0%}"
+                )
 
             cv2.rectangle(
                 frame,
-                (x1, y1 - text_h - 8),
-                (x1 + text_w + 4, y1),
-                (0, 0, 255),
-                -1
+                (x1, y1),
+                (x2, y2),
+                color,
+                2
             )
 
             cv2.putText(
                 frame,
                 label,
-                (x1 + 2, y1 - 5),
+                (
+                    x1,
+                    max(
+                        y1 - 8,
+                        20
+                    )
+                ),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
+                0.55,
+                color,
                 2
             )
-
-        return frame
-
-    def draw_roi(self, frame):
-        """Draws the trapezoid ROI so you can visually tune roi_points."""
-
-        frame_height, frame_width = frame.shape[:2]
-        roi_polygon = self.get_roi_polygon(frame_width, frame_height)
-
-        cv2.polylines(
-            frame, [roi_polygon], isClosed=True,
-            color=(0, 255, 255), thickness=2
-        )
 
         return frame

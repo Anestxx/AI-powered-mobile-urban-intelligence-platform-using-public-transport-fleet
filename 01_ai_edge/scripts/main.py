@@ -6,188 +6,109 @@ import requests
 
 
 # ============================================================
-# PATHS
+# PATH SETUP
 # ============================================================
 
-BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
+SCRIPT_DIR = os.path.dirname(
+    os.path.abspath(__file__)
 )
 
-sys.path.append(BASE_DIR)
+AI_DIR = os.path.dirname(
+    SCRIPT_DIR
+)
 
-from scripts.detector import RoadDetector
-from scripts.alert_manager import AlertManager
-from traffic_intelligence import TrafficIntelligence
+PROJECT_ROOT = os.path.dirname(
+    AI_DIR
+)
 
+sys.path.append(AI_DIR)
 
-GPS_DIR = os.path.abspath(
-    os.path.join(
-        BASE_DIR,
-        "..",
-        "05_gps_gis_prioritization"
-    )
+GPS_DIR = os.path.join(
+    PROJECT_ROOT,
+    "05_gps_gis_prioritization"
 )
 
 sys.path.append(GPS_DIR)
 
-from gps_priority import GPSSimulator, PriorityEngine
-from multi_bus_validator import MultiBusValidator
+
+# ============================================================
+# IMPORTS
+# ============================================================
+
+from detector import RoadDetector
+from alert_manager import AlertManager
+from traffic_intelligence import TrafficIntelligence
+from emergency_intelligence import EmergencyIntelligence
+
+from gps_priority import (
+    GPSSimulator,
+    PriorityEngine
+)
+
+from multi_bus_validator import (
+    MultiBusValidator
+)
 
 
 # ============================================================
-# CONFIGURATION
+# PATHS
 # ============================================================
 
 VIDEO_PATH = os.path.join(
-    BASE_DIR,
+    AI_DIR,
     "videos",
     "road_test.mp4"
 )
 
 RAD_MODEL_PATH = os.path.join(
-    BASE_DIR,
+    AI_DIR,
     "models",
     "best.pt"
 )
 
 POTHOLE_MODEL_PATH = os.path.join(
-    BASE_DIR,
+    AI_DIR,
     "models",
     "pothole.pt"
 )
+
+EMERGENCY_MODEL_PATH = os.path.join(
+    AI_DIR,
+    "models",
+    "emergency.pt"
+)
+
+
+# ============================================================
+# BACKEND
+# ============================================================
 
 BACKEND_URL = (
     "http://127.0.0.1:8000/api/alerts"
 )
 
+
+# ============================================================
+# BUS
+# ============================================================
+
 BUS_ID = "BMTC-DEMO-01"
 
 
 # ============================================================
-# AI SETTINGS
+# AI
 # ============================================================
 
-# AI inference happens every 3rd frame.
 AI_FRAME_INTERVAL = 3
 
-# CPU-friendly inference size.
 AI_IMAGE_SIZE = 416
 
 
 # ============================================================
-# PLAYBACK SPEED
+# PLAYBACK
 # ============================================================
-
-# 1.00 = original speed
-# 0.90 = slightly slow
-# 0.80 = medium slow
-# 0.70 = noticeably slow
 
 PLAYBACK_SPEED = 0.80
-
-
-# ============================================================
-# DRAW DETECTIONS
-# ============================================================
-
-def draw_detections(
-    frame,
-    detections
-):
-
-    for detection in detections:
-
-        bbox = detection.get("bbox")
-
-        if not bbox:
-            continue
-
-        x1, y1, x2, y2 = bbox
-
-        confidence = float(
-            detection.get(
-                "confidence",
-                0
-            )
-        )
-
-        class_name = detection.get(
-            "class_name",
-            "object"
-        )
-
-        label = (
-            f"{class_name} "
-            f"{confidence:.2f}"
-        )
-
-        # ----------------------------------------------------
-        # Bounding box
-        # ----------------------------------------------------
-
-        cv2.rectangle(
-            frame,
-            (x1, y1),
-            (x2, y2),
-            (0, 255, 0),
-            2
-        )
-
-        # ----------------------------------------------------
-        # Label dimensions
-        # ----------------------------------------------------
-
-        (
-            text_width,
-            text_height
-        ), _ = cv2.getTextSize(
-            label,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            2
-        )
-
-        label_top = max(
-            0,
-            y1 - text_height - 8
-        )
-
-        # ----------------------------------------------------
-        # Label background
-        # ----------------------------------------------------
-
-        cv2.rectangle(
-            frame,
-            (x1, label_top),
-            (
-                x1 + text_width + 8,
-                y1
-            ),
-            (0, 255, 0),
-            -1
-        )
-
-        # ----------------------------------------------------
-        # Label
-        # ----------------------------------------------------
-
-        cv2.putText(
-            frame,
-            label,
-            (
-                x1 + 4,
-                max(
-                    text_height + 2,
-                    y1 - 4
-                )
-            ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (0, 0, 0),
-            2
-        )
 
 
 # ============================================================
@@ -210,20 +131,36 @@ def send_alert(
         location = gps.move()
 
         # ----------------------------------------------------
-        # Event metadata
+        # EVENT
         # ----------------------------------------------------
 
         event = {
-            "event_type": alert["event_type"],
-            "confidence": alert["confidence"],
+            "event_type": alert[
+                "event_type"
+            ],
+            "confidence": float(
+                alert.get(
+                    "confidence",
+                    0
+                )
+            ),
             "bus_id": BUS_ID,
-            "latitude": location["latitude"],
-            "longitude": location["longitude"],
-            "timestamp": alert["timestamp"]
+            "latitude": location[
+                "latitude"
+            ],
+            "longitude": location[
+                "longitude"
+            ],
+            "timestamp": alert.get(
+                "timestamp",
+                time.strftime(
+                    "%Y-%m-%dT%H:%M:%S"
+                )
+            ),
         }
 
         # ----------------------------------------------------
-        # Multi-bus validation
+        # MULTI-BUS
         # ----------------------------------------------------
 
         validation = (
@@ -233,149 +170,380 @@ def send_alert(
         )
 
         cross_bus = (
-            validation[
-                "cross_bus_validation"
-            ]
+            validation.get(
+                "cross_bus_validation",
+                {}
+            )
         )
 
-        bus_count = (
-            cross_bus["bus_count"]
-        )
-
-        # ----------------------------------------------------
-        # Priority
-        # ----------------------------------------------------
-
-        priority = (
-            priority_engine.calculate(
-                alert["event_type"],
-                alert["confidence"],
-                bus_count
+        bus_count = int(
+            cross_bus.get(
+                "bus_count",
+                1
             )
         )
 
         # ----------------------------------------------------
-        # Severity
+        # PRIORITY
         # ----------------------------------------------------
 
-        severity = (
-            priority_engine.severity(
-                alert["event_type"],
-                priority
+        if alert["event_type"] == "emergency":
+
+            priority = 100.0
+
+        else:
+
+            priority = (
+                priority_engine.calculate(
+                    alert["event_type"],
+                    float(
+                        alert.get(
+                            "confidence",
+                            0
+                        )
+                    ),
+                    bus_count
+                )
             )
-        )
 
         # ----------------------------------------------------
-        # ONLY METADATA IS SENT
+        # SEVERITY
+        # ----------------------------------------------------
+
+        if alert["event_type"] == "emergency":
+
+            severity = "critical"
+
+        else:
+
+            severity = (
+                priority_engine.severity(
+                    alert["event_type"],
+                    priority
+                )
+            )
+
+        # ----------------------------------------------------
+        # BACKEND PAYLOAD
         # ----------------------------------------------------
 
         payload = {
-            "event_type": alert["event_type"],
-            "confidence": alert["confidence"],
-            "latitude": location["latitude"],
-            "longitude": location["longitude"],
+            "event_type": alert[
+                "event_type"
+            ],
+
+            "confidence": float(
+                alert.get(
+                    "confidence",
+                    0
+                )
+            ),
+
+            "latitude": location[
+                "latitude"
+            ],
+
+            "longitude": location[
+                "longitude"
+            ],
+
             "severity": severity,
+
             "priority_score": priority,
+
             "bus_id": BUS_ID,
-            "timestamp": alert["timestamp"],
+
+            "timestamp": event[
+                "timestamp"
+            ],
+
             "bbox": str(
-                alert.get("bbox")
-            )
+                alert.get(
+                    "bbox"
+                )
+            ),
         }
 
         # ----------------------------------------------------
-        # Extra traffic information
-        #
-        # The current backend schema does not have dedicated
-        # fields for these values, so they are printed locally.
-        # The actual alert still goes through the same backend.
-        # ----------------------------------------------------
-
-        if alert["event_type"] == "traffic":
-
-            print(
-                "\n"
-                "------------------------------------------"
-            )
-
-            print(
-                "TRAFFIC INTELLIGENCE ALERT"
-            )
-
-            print(
-                f"Traffic Index : "
-                f"{alert.get('traffic_index', 0)}"
-            )
-
-            print(
-                f"Traffic Level : "
-                f"{alert.get('traffic_level', 'high')}"
-            )
-
-            print(
-                f"Vehicles      : "
-                f"{alert.get('vehicle_count', 0)}"
-            )
-
-            print(
-                f"Pedestrians   : "
-                f"{alert.get('pedestrian_count', 0)}"
-            )
-
-            print(
-                f"Confidence    : "
-                f"{alert['confidence']:.2f}"
-            )
-
-            print(
-                f"Severity      : "
-                f"{severity}"
-            )
-
-            print(
-                f"Bus           : "
-                f"{BUS_ID}"
-            )
-
-            print(
-                "------------------------------------------"
-            )
-
-        # ----------------------------------------------------
-        # Send to FastAPI
+        # POST
         # ----------------------------------------------------
 
         response = requests.post(
             BACKEND_URL,
             json=payload,
-            timeout=2
+            timeout=3
         )
 
-        if response.status_code in (
+        if response.status_code in {
             200,
             201
-        ):
+        }:
 
             print(
-                f"[ALERT SAVED] "
+                f"\n[BACKEND SAVED] "
                 f"{alert['event_type']} | "
+                f"{alert.get('class_name', '')} | "
                 f"confidence="
-                f"{alert['confidence']:.2f} | "
-                f"priority={priority}"
+                f"{float(alert.get('confidence', 0)):.0%} | "
+                f"priority={priority:.1f} | "
+                f"bus_count={bus_count}"
             )
 
         else:
 
             print(
-                f"[BACKEND ERROR] "
-                f"HTTP {response.status_code}"
+                f"\n[BACKEND ERROR] "
+                f"HTTP {response.status_code}: "
+                f"{response.text}"
             )
+
+    except requests.exceptions.ConnectionError:
+
+        print(
+            "\n[BACKEND OFFLINE] "
+            "Start FastAPI on port 8000."
+        )
 
     except Exception as e:
 
         print(
-            f"[BACKEND] {e}"
+            f"\n[BACKEND ERROR] {e}"
         )
+
+
+# ============================================================
+# TRAFFIC PANEL
+# ============================================================
+
+def draw_traffic_panel(
+    frame,
+    traffic_result
+):
+
+    height, width = frame.shape[:2]
+
+    vehicle_count = traffic_result.get(
+        "vehicle_count",
+        0
+    )
+
+    pedestrian_count = traffic_result.get(
+        "pedestrian_count",
+        0
+    )
+
+    traffic_index = traffic_result.get(
+        "traffic_index",
+        0
+    )
+
+    traffic_level = traffic_result.get(
+        "traffic_level",
+        "low"
+    )
+
+    congestion_confirmed = (
+        traffic_result.get(
+            "congestion_confirmed",
+            False
+        )
+    )
+
+    panel_x = max(
+        width - 390,
+        10
+    )
+
+    panel_y = 15
+
+    panel_width = 375
+
+    panel_height = 175
+
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay,
+        (
+            panel_x,
+            panel_y
+        ),
+        (
+            panel_x + panel_width,
+            panel_y + panel_height
+        ),
+        (20, 20, 20),
+        -1
+    )
+
+    frame = cv2.addWeighted(
+        overlay,
+        0.82,
+        frame,
+        0.18,
+        0
+    )
+
+    cv2.putText(
+        frame,
+        "CODYSSEY TRAFFIC INTELLIGENCE",
+        (
+            panel_x + 15,
+            panel_y + 30
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.52,
+        (0, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        f"Vehicles: {vehicle_count}",
+        (
+            panel_x + 15,
+            panel_y + 60
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        f"Pedestrians: {pedestrian_count}",
+        (
+            panel_x + 15,
+            panel_y + 88
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        f"Traffic Index: {traffic_index}",
+        (
+            panel_x + 15,
+            panel_y + 116
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 255, 0),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        f"Level: {traffic_level.upper()}",
+        (
+            panel_x + 15,
+            panel_y + 144
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 200, 255),
+        2
+    )
+
+    if congestion_confirmed:
+
+        cv2.putText(
+            frame,
+            "CONGESTION CONFIRMED",
+            (
+                panel_x + 15,
+                panel_y + 168
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.50,
+            (0, 0, 255),
+            2
+        )
+
+    return frame
+
+
+# ============================================================
+# EMERGENCY PANEL
+# ============================================================
+
+def draw_emergency_panel(
+    frame,
+    emergency_status
+):
+
+    if not emergency_status.get(
+        "active",
+        False
+    ):
+        return frame
+
+    height, width = frame.shape[:2]
+
+    panel_width = 500
+
+    x = max(
+        (width - panel_width) // 2,
+        10
+    )
+
+    y = 15
+
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay,
+        (
+            x,
+            y
+        ),
+        (
+            x + panel_width,
+            y + 85
+        ),
+        (0, 0, 120),
+        -1
+    )
+
+    frame = cv2.addWeighted(
+        overlay,
+        0.88,
+        frame,
+        0.12,
+        0
+    )
+
+    cv2.putText(
+        frame,
+        "EMERGENCY PRIORITY CORRIDOR ACTIVE",
+        (
+            x + 20,
+            y + 32
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (255, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        "CRITICAL PRIORITY | REQUEST SIGNAL PRIORITY",
+        (
+            x + 20,
+            y + 62
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.48,
+        (0, 255, 255),
+        2
+    )
+
+    return frame
 
 
 # ============================================================
@@ -384,35 +552,61 @@ def send_alert(
 
 def main():
 
-    print("=" * 70)
-    print("CODYSSEY - AI VIDEO DEMO")
+    print("\n" + "=" * 70)
+    print("CODYSSEY URBAN INTELLIGENCE PLATFORM")
+    print("EDGE AI GATEWAY")
     print("=" * 70)
 
     # ========================================================
-    # LOAD MODELS
+    # FILE CHECK
     # ========================================================
 
-    print("\nLoading AI models...")
+    required_files = [
+        VIDEO_PATH,
+        RAD_MODEL_PATH,
+        POTHOLE_MODEL_PATH,
+    ]
+
+    for path in required_files:
+
+        if not os.path.exists(path):
+
+            print(
+                "\nERROR: Required file missing:"
+            )
+
+            print(path)
+
+            return
+
+    print(
+        "\nAll required files found."
+    )
+
+    # ========================================================
+    # DETECTOR
+    # ========================================================
 
     detector = RoadDetector(
         RAD_MODEL_PATH,
         POTHOLE_MODEL_PATH,
+        EMERGENCY_MODEL_PATH,
         imgsz=AI_IMAGE_SIZE
     )
 
-    # --------------------------------------------------------
-    # Normal event alert manager
-    # --------------------------------------------------------
+    # ========================================================
+    # ALERT MANAGER
+    # ========================================================
 
     alert_manager = AlertManager(
-        required_detections=2,
-        cooldown_seconds=8,
+        required_detections=3,
+        cooldown_seconds=10,
         persistence_window=5
     )
 
-    # --------------------------------------------------------
-    # Traffic intelligence engine
-    # --------------------------------------------------------
+    # ========================================================
+    # TRAFFIC
+    # ========================================================
 
     traffic_engine = TrafficIntelligence(
         congestion_index_threshold=60,
@@ -422,24 +616,35 @@ def main():
         cooldown_seconds=15
     )
 
-    # --------------------------------------------------------
+    # ========================================================
+    # EMERGENCY
+    # ========================================================
+
+    emergency_engine = (
+        EmergencyIntelligence(
+            confidence_threshold=0.50,
+            cooldown_seconds=15
+        )
+    )
+
+    # ========================================================
     # GPS
-    # --------------------------------------------------------
+    # ========================================================
 
     gps = GPSSimulator(
         start_lat=12.9716,
         start_lon=77.5946
     )
 
-    # --------------------------------------------------------
-    # Priority engine
-    # --------------------------------------------------------
+    # ========================================================
+    # PRIORITY
+    # ========================================================
 
     priority_engine = PriorityEngine()
 
-    # --------------------------------------------------------
-    # Multi-bus validation
-    # --------------------------------------------------------
+    # ========================================================
+    # MULTI BUS
+    # ========================================================
 
     multi_bus_validator = (
         MultiBusValidator(
@@ -448,10 +653,8 @@ def main():
         )
     )
 
-    print("AI models ready.")
-
     # ========================================================
-    # OPEN VIDEO
+    # VIDEO
     # ========================================================
 
     cap = cv2.VideoCapture(
@@ -461,26 +664,21 @@ def main():
     if not cap.isOpened():
 
         print(
-            "\nERROR: Could not open video:"
-        )
-
-        print(
-            VIDEO_PATH
+            "ERROR: Cannot open video."
         )
 
         return
 
-    # ========================================================
-    # VIDEO INFORMATION
-    # ========================================================
-
-    fps = cap.get(
+    video_fps = cap.get(
         cv2.CAP_PROP_FPS
     )
 
-    if fps <= 0:
+    if (
+        not video_fps
+        or video_fps <= 1
+    ):
 
-        fps = 30.0
+        video_fps = 30.0
 
     total_frames = int(
         cap.get(
@@ -488,36 +686,81 @@ def main():
         )
     )
 
-    print("\nVideo:")
-
-    print(
-        f"Original FPS : {fps:.2f}"
-    )
-
-    print(
-        f"Total frames : {total_frames}"
-    )
-
-    print(
-        f"Playback     : {PLAYBACK_SPEED:.2f}x"
-    )
-
-    print(
-        "\nAI processing starts..."
+    frame_delay_ms = max(
+        1,
+        int(
+            (
+                1000
+                / video_fps
+            )
+            / PLAYBACK_SPEED
+        )
     )
 
     # ========================================================
-    # IN-MEMORY PROCESSED VIDEO
+    # STATUS
     # ========================================================
 
-    # Nothing is written to disk.
-    #
-    # Frames temporarily remain in RAM together with
-    # the detections belonging to that exact frame.
+    print("\n" + "=" * 70)
+    print("SYSTEM READY")
+    print("=" * 70)
 
-    processed_video = []
+    print(
+        f"Video FPS      : {video_fps:.1f}"
+    )
 
-    frame_number = 0
+    print(
+        f"Total frames   : {total_frames}"
+    )
+
+    print(
+        f"AI interval    : "
+        f"Every {AI_FRAME_INTERVAL} frames"
+    )
+
+    print(
+        f"Playback speed : "
+        f"{PLAYBACK_SPEED:.2f}x"
+    )
+
+    print(
+        "\nControls:"
+    )
+
+    print(
+        "  Q = Quit"
+    )
+
+    print(
+        "  E = Simulate ambulance emergency"
+    )
+
+    print(
+        "  C = Clear emergency"
+    )
+
+    print("=" * 70)
+
+    # ========================================================
+    # STATE
+    # ========================================================
+
+    frame_count = 0
+
+    last_detections = []
+
+    last_traffic_result = {
+        "vehicle_count": 0,
+        "pedestrian_count": 0,
+        "traffic_index": 0,
+        "traffic_level": "low",
+        "congestion_confirmed": False,
+    }
+
+    emergency_status = {
+        "active": False,
+        "priority": 0,
+    }
 
     total_detections = 0
 
@@ -525,32 +768,41 @@ def main():
 
     total_traffic_alerts = 0
 
+    total_emergency_alerts = 0
+
     # ========================================================
-    # PASS 1
-    # AI PROCESSING
+    # LOOP
     # ========================================================
 
     while True:
 
-        ret, frame = cap.read()
+        success, frame = cap.read()
 
-        if not ret:
+        if not success:
+
+            print(
+                "\nVideo finished."
+            )
 
             break
 
-        frame_number += 1
+        frame_count += 1
 
-        detections = []
+        # ====================================================
+        # AI
+        # ====================================================
 
-        # ----------------------------------------------------
-        # AI inference
-        # ----------------------------------------------------
-
-        if (
-            frame_number
+        run_ai = (
+            frame_count
             % AI_FRAME_INTERVAL
             == 0
-        ):
+        )
+
+        if run_ai:
+
+            # ------------------------------------------------
+            # DETECTION
+            # ------------------------------------------------
 
             try:
 
@@ -563,9 +815,7 @@ def main():
             except Exception as e:
 
                 print(
-                    f"\n[AI ERROR] "
-                    f"Frame {frame_number}: "
-                    f"{e}"
+                    f"\n[AI ERROR] {e}"
                 )
 
                 detections = []
@@ -574,64 +824,35 @@ def main():
                 len(detections)
             )
 
-            # =================================================
-            # TRAFFIC INTELLIGENCE
-            # =================================================
+            # ------------------------------------------------
+            # TRAFFIC
+            # ------------------------------------------------
 
-            traffic_result = (
-                traffic_engine.analyze(
-                    detections
+            try:
+
+                traffic_result = (
+                    traffic_engine.analyze(
+                        detections
+                    )
                 )
-            )
 
-            vehicle_count = (
-                traffic_result[
-                    "vehicle_count"
-                ]
-            )
+                last_traffic_result = (
+                    traffic_result
+                )
 
-            pedestrian_count = (
-                traffic_result[
-                    "pedestrian_count"
-                ]
-            )
+            except Exception as e:
 
-            traffic_index = (
-                traffic_result[
-                    "traffic_index"
-                ]
-            )
+                print(
+                    f"\n[TRAFFIC ERROR] {e}"
+                )
 
-            traffic_level = (
-                traffic_result[
-                    "traffic_level"
-                ]
-            )
+                traffic_result = (
+                    last_traffic_result
+                )
 
-            congestion_confirmed = (
-                traffic_result[
-                    "congestion_confirmed"
-                ]
-            )
-
-            # -------------------------------------------------
-            # Terminal traffic status
-            # -------------------------------------------------
-
-            print(
-                f"\r"
-                f"[TRAFFIC] "
-                f"Vehicles={vehicle_count} "
-                f"Pedestrians={pedestrian_count} "
-                f"Index={traffic_index} "
-                f"Level={traffic_level}",
-                end="",
-                flush=True
-            )
-
-            # =================================================
-            # CONGESTION ALERT
-            # =================================================
+            # ------------------------------------------------
+            # TRAFFIC ALERT
+            # ------------------------------------------------
 
             traffic_alert = (
                 traffic_result.get(
@@ -642,37 +863,31 @@ def main():
             if traffic_alert:
 
                 print(
-                    "\n"
+                    "\n" + "=" * 60
                 )
 
                 print(
-                    "🚦 "
                     "TRAFFIC CONGESTION DETECTED"
                 )
 
                 print(
-                    f"   Vehicles: "
-                    f"{traffic_alert['vehicle_count']}"
+                    f"Vehicles: "
+                    f"{traffic_alert.get('vehicle_count', 0)}"
                 )
 
                 print(
-                    f"   Traffic Index: "
-                    f"{traffic_alert['traffic_index']}"
+                    f"Traffic index: "
+                    f"{traffic_alert.get('traffic_index', 0)}"
                 )
 
                 print(
-                    f"   Confidence: "
-                    f"{traffic_alert['confidence']}"
+                    f"Confidence: "
+                    f"{traffic_alert.get('confidence', 0):.0%}"
                 )
 
                 print(
-                    f"   Severity: "
-                    f"{traffic_alert['severity']}"
+                    "=" * 60
                 )
-
-                # ------------------------------------------------
-                # Send traffic alert through normal backend path.
-                # ------------------------------------------------
 
                 send_alert(
                     traffic_alert,
@@ -685,38 +900,125 @@ def main():
 
                 total_traffic_alerts += 1
 
-            # =================================================
-            # NORMAL EVENT ALERTS
-            # =================================================
+            # ------------------------------------------------
+            # EMERGENCY AI
+            # ------------------------------------------------
 
-            for detection in detections:
+            emergency_detections = [
+                detection
+                for detection in detections
+                if detection.get(
+                    "event_type"
+                ) == "emergency"
+            ]
 
-                # ------------------------------------------------
-                # IMPORTANT:
-                #
-                # Traffic detections are NOT sent individually
-                # through AlertManager.
-                #
-                # TrafficIntelligence handles them.
-                # ------------------------------------------------
+            if emergency_detections:
 
-                if (
-                    detection.get(
-                        "event_type"
-                    )
-                    == "traffic"
-                ):
+                location = (
+                    gps.get_location()
+                )
 
-                    continue
-
-                alert = (
-                    alert_manager
-                    .process_detection(
-                        detection
+                emergency_alert = (
+                    emergency_engine.process(
+                        emergency_detections,
+                        location["latitude"],
+                        location["longitude"]
                     )
                 )
 
-                if alert is not None:
+                if emergency_alert:
+
+                    print(
+                        "\n" + "=" * 70
+                    )
+
+                    print(
+                        "EMERGENCY VEHICLE DETECTED"
+                    )
+
+                    print(
+                        f"Vehicle: "
+                        f"{emergency_alert['class_name']}"
+                    )
+
+                    print(
+                        f"Confidence: "
+                        f"{emergency_alert['confidence']:.0%}"
+                    )
+
+                    print(
+                        "Priority: CRITICAL / 100"
+                    )
+
+                    print(
+                        "Action: REQUEST SIGNAL PRIORITY"
+                    )
+
+                    print(
+                        "=" * 70
+                    )
+
+                    send_alert(
+                        emergency_alert,
+                        gps,
+                        priority_engine,
+                        multi_bus_validator
+                    )
+
+                    emergency_status = {
+                        "active": True,
+                        "priority": 100,
+                        "event": emergency_alert,
+                    }
+
+                    total_alerts += 1
+
+                    total_emergency_alerts += 1
+
+            # ------------------------------------------------
+            # NORMAL EVENTS
+            # ------------------------------------------------
+
+            for detection in detections:
+
+                event_type = detection.get(
+                    "event_type"
+                )
+
+                # Traffic handled above.
+                if event_type == "traffic":
+                    continue
+
+                # Emergency handled above.
+                if event_type == "emergency":
+                    continue
+
+                try:
+
+                    alert = (
+                        alert_manager
+                        .process_detection(
+                            detection
+                        )
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"\n[ALERT ERROR] {e}"
+                    )
+
+                    alert = None
+
+                if alert:
+
+                    print(
+                        "\n🚨 VALIDATED ALERT"
+                    )
+
+                    print(
+                        alert
+                    )
 
                     send_alert(
                         alert,
@@ -727,57 +1029,244 @@ def main():
 
                     total_alerts += 1
 
+            last_detections = (
+                detections
+            )
+
         # ====================================================
-        # STORE ONLY IN RAM
+        # DRAW
         # ====================================================
 
-        processed_video.append(
-            (
-                frame,
-                detections
+        annotated_frame = frame.copy()
+
+        annotated_frame = (
+            detector.draw_detections(
+                annotated_frame,
+                last_detections
             )
         )
 
-        # ====================================================
-        # PROGRESS
-        # ====================================================
+        # ----------------------------------------------------
+        # TRAFFIC
+        # ----------------------------------------------------
 
-        if frame_number % 30 == 0:
-
-            percentage = (
-                frame_number
-                / total_frames
-                * 100
+        annotated_frame = (
+            draw_traffic_panel(
+                annotated_frame,
+                last_traffic_result
             )
+        )
+
+        # ----------------------------------------------------
+        # EMERGENCY
+        # ----------------------------------------------------
+
+        annotated_frame = (
+            draw_emergency_panel(
+                annotated_frame,
+                emergency_status
+            )
+        )
+
+        # ----------------------------------------------------
+        # BUS
+        # ----------------------------------------------------
+
+        cv2.putText(
+            annotated_frame,
+            f"BUS: {BUS_ID}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2
+        )
+
+        # ----------------------------------------------------
+        # EDGE
+        # ----------------------------------------------------
+
+        cv2.putText(
+            annotated_frame,
+            "EDGE AI: ACTIVE",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (0, 255, 255),
+            2
+        )
+
+        # ----------------------------------------------------
+        # GPS
+        # ----------------------------------------------------
+
+        location = gps.get_location()
+
+        cv2.putText(
+            annotated_frame,
+            (
+                f"GPS: "
+                f"{location['latitude']:.4f}, "
+                f"{location['longitude']:.4f}"
+            ),
+            (10, 90),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 255, 255),
+            2
+        )
+
+        # ----------------------------------------------------
+        # FRAME
+        # ----------------------------------------------------
+
+        cv2.putText(
+            annotated_frame,
+            f"Frame: {frame_count}",
+            (10, 118),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (200, 200, 200),
+            2
+        )
+
+        # ====================================================
+        # DISPLAY
+        # ====================================================
+
+        cv2.imshow(
+            "CODYSSEY - Urban Intelligence Edge",
+            annotated_frame
+        )
+
+        # ====================================================
+        # KEYBOARD
+        # ====================================================
+
+        key = (
+            cv2.waitKey(
+                frame_delay_ms
+            )
+            & 0xFF
+        )
+
+        # ----------------------------------------------------
+        # QUIT
+        # ----------------------------------------------------
+
+        if key == ord("q"):
 
             print(
-                f"\rAI processing: "
-                f"{frame_number}/"
-                f"{total_frames} "
-                f"({percentage:.1f}%)",
-                end="",
-                flush=True
+                "\nStopping..."
             )
+
+            break
+
+        # ----------------------------------------------------
+        # EMERGENCY SIMULATION
+        # ----------------------------------------------------
+
+       
+            emergency_alert = (
+                emergency_engine
+                .simulate_emergency(
+                    class_name="ambulance",
+                    confidence=0.96
+                )
+            )
+
+            if emergency_alert:
+
+                emergency_alert[
+                    "corridor"
+                ] = (
+                    emergency_engine
+                    .generate_corridor(
+                        location["latitude"],
+                        location["longitude"]
+                    )
+                )
+
+                print(
+                    "\n" + "=" * 70
+                )
+
+                print(
+                    "🚑 SIMULATED AMBULANCE DETECTED"
+                )
+
+                print(
+                    "Confidence: 96%"
+                )
+
+                print(
+                    "Priority: CRITICAL / 100"
+                )
+
+                print(
+                    "Emergency corridor ACTIVE"
+                )
+
+                print(
+                    "Signal action: REQUEST_PRIORITY"
+                )
+
+                print(
+                    "=" * 70
+                )
+
+                send_alert(
+                    emergency_alert,
+                    gps,
+                    priority_engine,
+                    multi_bus_validator
+                )
+
+                emergency_status = {
+                    "active": True,
+                    "priority": 100,
+                    "event": emergency_alert,
+                }
+
+                total_alerts += 1
+
+                total_emergency_alerts += 1
+
+        # ----------------------------------------------------
+        # CLEAR EMERGENCY
+        # ----------------------------------------------------
+
+       
+
+    # ========================================================
+    # CLEANUP
+    # ========================================================
 
     cap.release()
 
-    print("\n")
+    cv2.destroyAllWindows()
 
     # ========================================================
-    # AI PROCESSING SUMMARY
+    # SUMMARY
     # ========================================================
-
-    print("=" * 70)
-    print("AI PROCESSING COMPLETE")
-    print("=" * 70)
 
     print(
-        f"Frames            : "
-        f"{frame_number}"
+        "\n" + "=" * 70
     )
 
     print(
-        f"Detections        : "
+        "CODYSSEY EDGE AI SESSION COMPLETE"
+    )
+
+    print("=" * 70)
+
+    print(
+        f"Frames processed  : "
+        f"{frame_count}"
+    )
+
+    print(
+        f"AI detections     : "
         f"{total_detections}"
     )
 
@@ -792,166 +1281,32 @@ def main():
     )
 
     print(
-        "Saved files       : NONE"
-    )
-
-    # ========================================================
-    # PASS 2
-    # PLAYBACK
-    # ========================================================
-
-    print(
-        "\nStarting playback..."
+        f"Emergency alerts  : "
+        f"{total_emergency_alerts}"
     )
 
     print(
-        f"Speed: "
-        f"{PLAYBACK_SPEED:.2f}x"
+        "Frames saved      : 0"
     )
 
     print(
-        "Press Q to stop."
-    )
-
-    # ========================================================
-    # PLAYBACK INTERVAL
-    # ========================================================
-
-    frame_interval = (
-        1.0
-        / fps
-        / PLAYBACK_SPEED
-    )
-
-    next_frame_time = (
-        time.perf_counter()
-    )
-
-    # ========================================================
-    # PLAY
-    # ========================================================
-
-    for frame, detections in processed_video:
-
-        # ----------------------------------------------------
-        # Draw detections belonging to this exact frame
-        # ----------------------------------------------------
-
-        draw_detections(
-            frame,
-            detections
-        )
-
-        # ----------------------------------------------------
-        # Display
-        # ----------------------------------------------------
-
-        cv2.imshow(
-            "CODYSSEY - AI Edge Intelligence",
-            frame
-        )
-
-        # ----------------------------------------------------
-        # Medium-slow playback
-        # ----------------------------------------------------
-
-        next_frame_time += (
-            frame_interval
-        )
-
-        remaining = (
-            next_frame_time
-            - time.perf_counter()
-        )
-
-        if remaining > 0:
-
-            key = cv2.waitKey(
-                max(
-                    1,
-                    int(
-                        remaining
-                        * 1000
-                    )
-                )
-            ) & 0xFF
-
-        else:
-
-            key = cv2.waitKey(
-                1
-            ) & 0xFF
-
-            next_frame_time = (
-                time.perf_counter()
-            )
-
-        # ----------------------------------------------------
-        # Quit
-        # ----------------------------------------------------
-
-        if key == ord("q"):
-
-            break
-
-    # ========================================================
-    # CLEANUP
-    # ========================================================
-
-    processed_video.clear()
-
-    cv2.destroyAllWindows()
-
-    print(
-        "\n"
-        + "=" * 70
+        "Output video      : 0"
     )
 
     print(
-        "CODYSSEY DEMO FINISHED"
-    )
-
-    print("=" * 70)
-
-    print(
-        f"Frames processed : "
-        f"{frame_number}"
+        "Raw video upload  : 0"
     )
 
     print(
-        f"Detections       : "
-        f"{total_detections}"
-    )
-
-    print(
-        f"Alerts           : "
-        f"{total_alerts}"
-    )
-
-    print(
-        f"Traffic alerts   : "
-        f"{total_traffic_alerts}"
-    )
-
-    print(
-        "Frames saved     : 0"
-    )
-
-    print(
-        "Video saved      : 0"
-    )
-
-    print(
-        "Backend          : metadata only"
+        "Backend payload   : Metadata only"
     )
 
     print("=" * 70)
 
 
 # ============================================================
-# WINDOWS ENTRY POINT
+# ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
-
-    main() 
+    main()
