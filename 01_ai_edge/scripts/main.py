@@ -78,6 +78,12 @@ EMERGENCY_MODEL_PATH = os.path.join(
     "emergency.pt"
 )
 
+AMBULANCE_MODEL_PATH = os.path.join(
+    AI_DIR,
+    "models",
+    "ambulance.pt"
+)
+
 
 # ============================================================
 # BACKEND
@@ -99,8 +105,8 @@ BUS_ID = "BMTC-DEMO-01"
 # AI
 # ============================================================
 
-AI_FRAME_INTERVAL = 3
-
+# AI runs continuously in a background worker.
+# There is NO visible frame interval and NO skipped playback frames.
 AI_IMAGE_SIZE = 416
 
 
@@ -108,7 +114,7 @@ AI_IMAGE_SIZE = 416
 # PLAYBACK
 # ============================================================
 
-PLAYBACK_SPEED = 0.80
+PLAYBACK_SPEED = 0.20
 
 
 # ============================================================
@@ -565,6 +571,8 @@ def main():
         VIDEO_PATH,
         RAD_MODEL_PATH,
         POTHOLE_MODEL_PATH,
+        EMERGENCY_MODEL_PATH,
+        AMBULANCE_MODEL_PATH,
     ]
 
     for path in required_files:
@@ -591,6 +599,7 @@ def main():
         RAD_MODEL_PATH,
         POTHOLE_MODEL_PATH,
         EMERGENCY_MODEL_PATH,
+        AMBULANCE_MODEL_PATH,
         imgsz=AI_IMAGE_SIZE
     )
 
@@ -714,13 +723,24 @@ def main():
     )
 
     print(
-        f"AI interval    : "
-        f"Every {AI_FRAME_INTERVAL} frames"
+        "AI processing   : Every original frame, synchronized"
+    )
+
+    print(
+        "Playback        : Every original video frame"
+    )
+
+    print(
+        "AI sampling     : No interval / no frame skipping"
     )
 
     print(
         f"Playback speed : "
         f"{PLAYBACK_SPEED:.2f}x"
+    )
+
+    print(
+        "AI strategy     : Detect current frame, then display current frame"
     )
 
     print(
@@ -732,11 +752,15 @@ def main():
     )
 
     print(
-        "  E = Simulate ambulance emergency"
+        "  Emergency = AI detected automatically"
     )
 
     print(
-        "  C = Clear emergency"
+        "  Playback = Original video, continuous"
+    )
+
+    print(
+        "  Storage = No extracted/saved frames"
     )
 
     print("=" * 70)
@@ -760,7 +784,11 @@ def main():
     emergency_status = {
         "active": False,
         "priority": 0,
+        "event": None,
+        "expires_at": 0.0,
     }
+
+    EMERGENCY_DISPLAY_SECONDS = 8
 
     total_detections = 0
 
@@ -789,108 +817,154 @@ def main():
         frame_count += 1
 
         # ====================================================
-        # AI
+        # SYNCHRONOUS AI - EXACT CURRENT FRAME
+        # ====================================================
+        #
+        # Every frame read from road_test.mp4 is sent directly
+        # through the detector before that same frame is shown.
+        #
+        # There is NO frame interval, NO frame skipping, and NO
+        # background worker. This prevents stale detections.
+        #
+        # The original recording is never written or modified.
         # ====================================================
 
-        run_ai = (
-            frame_count
-            % AI_FRAME_INTERVAL
-            == 0
-        )
+        try:
+            detections = detector.detect(frame)
+        except Exception as e:
+            print(
+                f"\n[AI ERROR] Frame {frame_count}: {e}"
+            )
+            detections = []
 
-        if run_ai:
+        total_detections += len(detections)
 
-            # ------------------------------------------------
-            # DETECTION
-            # ------------------------------------------------
+        # --------------------------------------------------------
+        # TRAFFIC
+        # --------------------------------------------------------
 
-            try:
+        try:
+            traffic_result = traffic_engine.analyze(detections)
+            last_traffic_result = traffic_result
+        except Exception as e:
+            print(f"\n[TRAFFIC ERROR] {e}")
+            traffic_result = last_traffic_result
 
-                detections = (
-                    detector.detect(
-                        frame
-                    )
-                )
+        traffic_alert = traffic_result.get("alert")
 
-            except Exception as e:
+        if traffic_alert:
+            print("\n" + "=" * 60)
+            print("TRAFFIC CONGESTION DETECTED")
+            print(
+                f"Vehicles: "
+                f"{traffic_alert.get('vehicle_count', 0)}"
+            )
+            print(
+                f"Traffic index: "
+                f"{traffic_alert.get('traffic_index', 0)}"
+            )
+            print(
+                f"Confidence: "
+                f"{traffic_alert.get('confidence', 0):.0%}"
+            )
+            print("=" * 60)
 
-                print(
-                    f"\n[AI ERROR] {e}"
-                )
-
-                detections = []
-
-            total_detections += (
-                len(detections)
+            send_alert(
+                traffic_alert,
+                gps,
+                priority_engine,
+                multi_bus_validator
             )
 
-            # ------------------------------------------------
-            # TRAFFIC
-            # ------------------------------------------------
+            total_alerts += 1
+            total_traffic_alerts += 1
 
-            try:
+        # --------------------------------------------------------
+        # AUTOMATIC EMERGENCY AI
+        # --------------------------------------------------------
 
-                traffic_result = (
-                    traffic_engine.analyze(
-                        detections
-                    )
-                )
+        emergency_detections = [
+            detection
+            for detection in detections
+            if detection.get("event_type") == "emergency"
+        ]
 
-                last_traffic_result = (
-                    traffic_result
-                )
+        if emergency_detections:
 
-            except Exception as e:
+            location = gps.get_location()
 
-                print(
-                    f"\n[TRAFFIC ERROR] {e}"
-                )
-
-                traffic_result = (
-                    last_traffic_result
-                )
-
-            # ------------------------------------------------
-            # TRAFFIC ALERT
-            # ------------------------------------------------
-
-            traffic_alert = (
-                traffic_result.get(
-                    "alert"
-                )
+            emergency_alert = emergency_engine.process(
+                emergency_detections,
+                location["latitude"],
+                location["longitude"]
             )
 
-            if traffic_alert:
+            if emergency_alert:
 
+                print("\n" + "=" * 70)
+                print("🚑 EMERGENCY VEHICLE DETECTED")
                 print(
-                    "\n" + "=" * 60
+                    f"Vehicle: "
+                    f"{emergency_alert['class_name']}"
                 )
-
-                print(
-                    "TRAFFIC CONGESTION DETECTED"
-                )
-
-                print(
-                    f"Vehicles: "
-                    f"{traffic_alert.get('vehicle_count', 0)}"
-                )
-
-                print(
-                    f"Traffic index: "
-                    f"{traffic_alert.get('traffic_index', 0)}"
-                )
-
                 print(
                     f"Confidence: "
-                    f"{traffic_alert.get('confidence', 0):.0%}"
+                    f"{emergency_alert['confidence']:.0%}"
                 )
-
-                print(
-                    "=" * 60
-                )
+                print("Priority: CRITICAL / 100")
+                print("🚦 REQUEST SIGNAL PRIORITY")
+                print("🚨 EMERGENCY CORRIDOR ACTIVE")
+                print("=" * 70)
 
                 send_alert(
-                    traffic_alert,
+                    emergency_alert,
+                    gps,
+                    priority_engine,
+                    multi_bus_validator
+                )
+
+                emergency_status = {
+                    "active": True,
+                    "priority": 100,
+                    "event": emergency_alert,
+                    "expires_at": (
+                        time.time()
+                        + EMERGENCY_DISPLAY_SECONDS
+                    ),
+                }
+
+                total_alerts += 1
+                total_emergency_alerts += 1
+
+        # --------------------------------------------------------
+        # NORMAL EVENTS
+        # --------------------------------------------------------
+
+        for detection in detections:
+
+            event_type = detection.get("event_type")
+
+            if event_type in {
+                "traffic",
+                "emergency",
+            }:
+                continue
+
+            try:
+                alert = alert_manager.process_detection(
+                    detection
+                )
+            except Exception as e:
+                print(f"\n[ALERT ERROR] {e}")
+                alert = None
+
+            if alert:
+
+                print("\n🚨 VALIDATED ALERT")
+                print(alert)
+
+                send_alert(
+                    alert,
                     gps,
                     priority_engine,
                     multi_bus_validator
@@ -898,140 +972,21 @@ def main():
 
                 total_alerts += 1
 
-                total_traffic_alerts += 1
+        # These detections belong to the exact frame below.
+        last_detections = detections
 
-            # ------------------------------------------------
-            # EMERGENCY AI
-            # ------------------------------------------------
-
-            emergency_detections = [
-                detection
-                for detection in detections
-                if detection.get(
-                    "event_type"
-                ) == "emergency"
-            ]
-
-            if emergency_detections:
-
-                location = (
-                    gps.get_location()
-                )
-
-                emergency_alert = (
-                    emergency_engine.process(
-                        emergency_detections,
-                        location["latitude"],
-                        location["longitude"]
-                    )
-                )
-
-                if emergency_alert:
-
-                    print(
-                        "\n" + "=" * 70
-                    )
-
-                    print(
-                        "EMERGENCY VEHICLE DETECTED"
-                    )
-
-                    print(
-                        f"Vehicle: "
-                        f"{emergency_alert['class_name']}"
-                    )
-
-                    print(
-                        f"Confidence: "
-                        f"{emergency_alert['confidence']:.0%}"
-                    )
-
-                    print(
-                        "Priority: CRITICAL / 100"
-                    )
-
-                    print(
-                        "Action: REQUEST SIGNAL PRIORITY"
-                    )
-
-                    print(
-                        "=" * 70
-                    )
-
-                    send_alert(
-                        emergency_alert,
-                        gps,
-                        priority_engine,
-                        multi_bus_validator
-                    )
-
-                    emergency_status = {
-                        "active": True,
-                        "priority": 100,
-                        "event": emergency_alert,
-                    }
-
-                    total_alerts += 1
-
-                    total_emergency_alerts += 1
-
-            # ------------------------------------------------
-            # NORMAL EVENTS
-            # ------------------------------------------------
-
-            for detection in detections:
-
-                event_type = detection.get(
-                    "event_type"
-                )
-
-                # Traffic handled above.
-                if event_type == "traffic":
-                    continue
-
-                # Emergency handled above.
-                if event_type == "emergency":
-                    continue
-
-                try:
-
-                    alert = (
-                        alert_manager
-                        .process_detection(
-                            detection
-                        )
-                    )
-
-                except Exception as e:
-
-                    print(
-                        f"\n[ALERT ERROR] {e}"
-                    )
-
-                    alert = None
-
-                if alert:
-
-                    print(
-                        "\n🚨 VALIDATED ALERT"
-                    )
-
-                    print(
-                        alert
-                    )
-
-                    send_alert(
-                        alert,
-                        gps,
-                        priority_engine,
-                        multi_bus_validator
-                    )
-
-                    total_alerts += 1
-
-            last_detections = (
-                detections
-            )
+        # Expire the emergency UI after the live display window.
+        if (
+            emergency_status.get("active", False)
+            and time.time()
+            >= emergency_status.get("expires_at", 0.0)
+        ):
+            emergency_status = {
+                "active": False,
+                "priority": 0,
+                "event": None,
+                "expires_at": 0.0,
+            }
 
         # ====================================================
         # DRAW
@@ -1116,22 +1071,13 @@ def main():
             2
         )
 
-        # ----------------------------------------------------
-        # FRAME
-        # ----------------------------------------------------
-
-        cv2.putText(
-            annotated_frame,
-            f"Frame: {frame_count}",
-            (10, 118),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
-            (200, 200, 200),
-            2
-        )
-
         # ====================================================
-        # DISPLAY
+        # DISPLAY ORIGINAL VIDEO + LIVE AI OVERLAY
+        # ====================================================
+        #
+        # `frame` is the original frame read from road_test.mp4.
+        # `annotated_frame` is only an in-memory display image.
+        # It is NEVER saved and NEVER written into a new video.
         # ====================================================
 
         cv2.imshow(
@@ -1161,82 +1107,6 @@ def main():
             )
 
             break
-
-        # ----------------------------------------------------
-        # EMERGENCY SIMULATION
-        # ----------------------------------------------------
-
-       
-            emergency_alert = (
-                emergency_engine
-                .simulate_emergency(
-                    class_name="ambulance",
-                    confidence=0.96
-                )
-            )
-
-            if emergency_alert:
-
-                emergency_alert[
-                    "corridor"
-                ] = (
-                    emergency_engine
-                    .generate_corridor(
-                        location["latitude"],
-                        location["longitude"]
-                    )
-                )
-
-                print(
-                    "\n" + "=" * 70
-                )
-
-                print(
-                    "🚑 SIMULATED AMBULANCE DETECTED"
-                )
-
-                print(
-                    "Confidence: 96%"
-                )
-
-                print(
-                    "Priority: CRITICAL / 100"
-                )
-
-                print(
-                    "Emergency corridor ACTIVE"
-                )
-
-                print(
-                    "Signal action: REQUEST_PRIORITY"
-                )
-
-                print(
-                    "=" * 70
-                )
-
-                send_alert(
-                    emergency_alert,
-                    gps,
-                    priority_engine,
-                    multi_bus_validator
-                )
-
-                emergency_status = {
-                    "active": True,
-                    "priority": 100,
-                    "event": emergency_alert,
-                }
-
-                total_alerts += 1
-
-                total_emergency_alerts += 1
-
-        # ----------------------------------------------------
-        # CLEAR EMERGENCY
-        # ----------------------------------------------------
-
-       
 
     # ========================================================
     # CLEANUP
@@ -1283,6 +1153,22 @@ def main():
     print(
         f"Emergency alerts  : "
         f"{total_emergency_alerts}"
+    )
+
+    print(
+        "Original video    : Displayed directly"
+    )
+
+    print(
+        "Frames extracted  : 0"
+    )
+
+    print(
+        "Original video    : Displayed directly"
+    )
+
+    print(
+        "Frames extracted  : 0"
     )
 
     print(

@@ -1,12 +1,13 @@
-import os
 import cv2
 import torch
-
-from ultralytics import YOLO
-from ultralytics import YOLOWorld
+from ultralytics import YOLO, YOLOWorld
 
 
 class RoadDetector:
+
+    # ============================================================
+    # RAD MODEL
+    # ============================================================
 
     RAD_CLASS_EVENT_MAP = {
         "HMV": "traffic",
@@ -17,122 +18,131 @@ class RoadDetector:
         "UnsurfacedRoad": "road_infrastructure",
     }
 
-    EMERGENCY_CLASSES = [
+    # ============================================================
+    # EMERGENCY CLASSES
+    # ============================================================
+
+    EMERGENCY_WORLD_CLASSES = [
         "ambulance",
         "emergency vehicle",
         "police car",
         "fire truck",
     ]
 
+    # ============================================================
+    # INITIALIZATION
+    # ============================================================
+
     def __init__(
         self,
         rad_model_path,
         pothole_model_path,
-        emergency_model_path=None,
-        imgsz=416,
+        emergency_world_model_path=None,
+        ambulance_model_path=None,
+        imgsz=640,
     ):
 
         print("=" * 70)
         print("CODYSSEY MULTI-MODEL AI DETECTOR")
         print("=" * 70)
 
-        self.device = (
-            0
-            if torch.cuda.is_available()
-            else "cpu"
-        )
+        # --------------------------------------------------------
+        # DEVICE
+        # --------------------------------------------------------
+
+        self.device = 0 if torch.cuda.is_available() else "cpu"
 
         print("Device:", self.device)
 
         self.imgsz = imgsz
 
-        # ====================================================
+        # ========================================================
         # RAD MODEL
-        # ====================================================
+        # ========================================================
 
-        print("\nLoading RAD model...")
+        print("\nLoading RAD model:")
+        print(rad_model_path)
 
-        self.rad_model = YOLO(
-            rad_model_path
-        )
+        self.rad_model = YOLO(rad_model_path)
 
-        print(
-            "RAD classes:",
-            self.rad_model.names
-        )
-
-        # ====================================================
+        # ========================================================
         # POTHOLE MODEL
-        # ====================================================
+        # ========================================================
 
-        print("\nLoading pothole model...")
+        print("\nLoading pothole model:")
+        print(pothole_model_path)
 
-        self.pothole_model = YOLO(
-            pothole_model_path
-        )
+        self.pothole_model = YOLO(pothole_model_path)
 
-        print(
-            "Pothole classes:",
-            self.pothole_model.names
-        )
+        # ========================================================
+        # YOLO-WORLD EMERGENCY MODEL
+        # ========================================================
 
-        # ====================================================
-        # EMERGENCY YOLO-WORLD
-        # ====================================================
+        self.emergency_world_model = None
 
-        print(
-            "\nLoading automatic emergency AI..."
-        )
+        if emergency_world_model_path:
 
-        try:
+            print("\nLoading YOLO-World emergency model:")
+            print(emergency_world_model_path)
 
-            if (
-                emergency_model_path
-                and os.path.exists(
-                    emergency_model_path
-                )
-            ):
+            self.emergency_world_model = YOLOWorld(
+                emergency_world_model_path
+            )
 
-                self.emergency_model = YOLOWorld(
-                    emergency_model_path
-                )
-
-            else:
-
-                self.emergency_model = YOLOWorld(
-                    "yolov8s-worldv2.pt"
-                )
-
-            self.emergency_model.set_classes(
-                self.EMERGENCY_CLASSES
+            self.emergency_world_model.set_classes(
+                self.EMERGENCY_WORLD_CLASSES
             )
 
             print(
-                "Emergency classes:",
-                self.EMERGENCY_CLASSES
+                "YOLO-World emergency classes:",
+                self.EMERGENCY_WORLD_CLASSES
+            )
+
+        # ========================================================
+        # INDIAN AMBULANCE MODEL
+        # ========================================================
+
+        self.ambulance_model = None
+
+        if ambulance_model_path:
+
+            print("\nLoading Indian ambulance model:")
+            print(ambulance_model_path)
+
+            self.ambulance_model = YOLO(
+                ambulance_model_path
             )
 
             print(
-                "Emergency AI: ACTIVE"
+                "Indian ambulance classes:",
+                self.ambulance_model.names
             )
 
-        except Exception as e:
+        # ========================================================
+        # PRINT MODEL CLASSES
+        # ========================================================
 
-            print(
-                "\n[EMERGENCY AI ERROR]"
-            )
+        print("\nRAD classes:")
+        print(self.rad_model.names)
 
-            print(e)
+        print("\nPothole classes:")
+        print(self.pothole_model.names)
 
-            self.emergency_model = None
+        if self.emergency_world_model is not None:
+            print("\nYOLO-World emergency classes:")
+            print(self.emergency_world_model.names)
 
-        print("\n" + "=" * 70)
-        print("CODYSSEY AI DETECTOR READY")
+        if self.ambulance_model is not None:
+            print("\nIndian ambulance classes:")
+            print(self.ambulance_model.names)
+
+        print("=" * 70)
+        print("MULTI-MODEL DETECTOR READY")
         print("=" * 70)
 
-    # ========================================================
-    # DETECT
-    # ========================================================
+    # ============================================================
+    # MAIN DETECTION
+    # ============================================================
 
     def detect(self, frame):
 
@@ -141,62 +151,46 @@ class RoadDetector:
 
         detections = []
 
-        # ====================================================
-        # RAD
-        # ====================================================
+        # ========================================================
+        # RAD DETECTION
+        # ========================================================
 
-        try:
+        rad_results = self.rad_model.predict(
+            frame,
+            imgsz=self.imgsz,
+            conf=0.35,
+            device=self.device,
+            verbose=False,
+        )
 
-            results = self.rad_model.predict(
-                frame,
-                imgsz=self.imgsz,
-                conf=0.35,
-                device=self.device,
-                verbose=False,
-            )
+        if rad_results:
 
-            if results:
+            result = rad_results[0]
 
-                result = results[0]
+            if result.boxes is not None:
 
-                if result.boxes is not None:
+                for box in result.boxes:
 
-                    for box in result.boxes:
+                    class_id = int(box.cls[0])
+                    confidence = float(box.conf[0])
 
-                        class_id = int(
-                            box.cls[0]
-                        )
+                    class_name = self.rad_model.names[class_id]
 
-                        confidence = float(
-                            box.conf[0]
-                        )
+                    event_type = self.RAD_CLASS_EVENT_MAP.get(
+                        class_name
+                    )
 
-                        class_name = (
-                            self.rad_model
-                            .names[class_id]
-                        )
+                    if event_type is None:
+                        continue
 
-                        event_type = (
-                            self.RAD_CLASS_EVENT_MAP
-                            .get(class_name)
-                        )
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                        if event_type is None:
-                            continue
-
-                        x1, y1, x2, y2 = (
-                            box.xyxy[0]
-                            .tolist()
-                        )
-
-                        detections.append({
+                    detections.append(
+                        {
                             "event_type": event_type,
                             "class_name": class_name,
                             "class_id": class_id,
-                            "confidence": round(
-                                confidence,
-                                4
-                            ),
+                            "confidence": round(confidence, 4),
                             "bbox": [
                                 int(x1),
                                 int(y1),
@@ -204,56 +198,39 @@ class RoadDetector:
                                 int(y2),
                             ],
                             "model": "rad",
-                        })
+                        }
+                    )
 
-        except Exception as e:
+        # ========================================================
+        # POTHOLE DETECTION
+        # ========================================================
 
-            print(
-                "[RAD ERROR]",
-                e
-            )
+        pothole_results = self.pothole_model.predict(
+            frame,
+            imgsz=self.imgsz,
+            conf=0.25,
+            device=self.device,
+            verbose=False,
+        )
 
-        # ====================================================
-        # POTHOLE
-        # ====================================================
+        if pothole_results:
 
-        try:
+            result = pothole_results[0]
 
-            results = (
-                self.pothole_model.predict(
-                    frame,
-                    imgsz=self.imgsz,
-                    conf=0.20,
-                    device=self.device,
-                    verbose=False,
-                )
-            )
+            if result.boxes is not None:
 
-            if results:
+                for box in result.boxes:
 
-                result = results[0]
+                    confidence = float(box.conf[0])
 
-                if result.boxes is not None:
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                    for box in result.boxes:
-
-                        confidence = float(
-                            box.conf[0]
-                        )
-
-                        x1, y1, x2, y2 = (
-                            box.xyxy[0]
-                            .tolist()
-                        )
-
-                        detections.append({
+                    detections.append(
+                        {
                             "event_type": "pothole",
                             "class_name": "pothole",
                             "class_id": 0,
-                            "confidence": round(
-                                confidence,
-                                4
-                            ),
+                            "confidence": round(confidence, 4),
                             "bbox": [
                                 int(x1),
                                 int(y1),
@@ -261,60 +238,44 @@ class RoadDetector:
                                 int(y2),
                             ],
                             "model": "pothole",
-                        })
+                        }
+                    )
 
-        except Exception as e:
+        # ========================================================
+        # YOLO-WORLD EMERGENCY DETECTION
+        # ========================================================
 
-            print(
-                "[POTHOLE ERROR]",
-                e
+        if self.emergency_world_model is not None:
+
+            world_results = self.emergency_world_model.predict(
+                frame,
+                imgsz=416,
+                conf=0.30,
+                device=self.device,
+                verbose=False,
             )
 
-        # ====================================================
-        # AUTOMATIC EMERGENCY DETECTION
-        # ====================================================
+            if world_results:
 
-        if self.emergency_model is not None:
+                result = world_results[0]
 
-            try:
+                if result.boxes is not None:
 
-                results = (
-                    self.emergency_model.predict(
-                        frame,
-                        imgsz=self.imgsz,
-                        conf=0.35,
-                        device=self.device,
-                        verbose=False,
-                    )
-                )
+                    for box in result.boxes:
 
-                if results:
+                        class_id = int(box.cls[0])
+                        confidence = float(box.conf[0])
 
-                    result = results[0]
+                        class_name = (
+                            self.emergency_world_model.names[
+                                class_id
+                            ]
+                        )
 
-                    if result.boxes is not None:
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                        for box in result.boxes:
-
-                            class_id = int(
-                                box.cls[0]
-                            )
-
-                            confidence = float(
-                                box.conf[0]
-                            )
-
-                            class_name = str(
-                                self.emergency_model
-                                .names[class_id]
-                            )
-
-                            x1, y1, x2, y2 = (
-                                box.xyxy[0]
-                                .tolist()
-                            )
-
-                            detections.append({
+                        detections.append(
+                            {
                                 "event_type": "emergency",
                                 "class_name": class_name,
                                 "class_id": class_id,
@@ -328,26 +289,280 @@ class RoadDetector:
                                     int(x2),
                                     int(y2),
                                 ],
-                                "model": "yolo_world_emergency",
-                            })
+                                "model": "yolo_world",
+                            }
+                        )
 
-            except Exception as e:
+        # ========================================================
+        # INDIAN AMBULANCE MODEL
+        # ========================================================
 
-                print(
-                    "[EMERGENCY AI ERROR]",
-                    e
-                )
+        if self.ambulance_model is not None:
+
+            ambulance_results = self.ambulance_model.predict(
+                frame,
+                imgsz=self.imgsz,
+                conf=0.35,
+                device=self.device,
+                verbose=False,
+            )
+
+            if ambulance_results:
+
+                result = ambulance_results[0]
+
+                if result.boxes is not None:
+
+                    for box in result.boxes:
+
+                        class_id = int(box.cls[0])
+                        confidence = float(box.conf[0])
+
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+
+                        # Get actual class name if available
+                        try:
+                            class_name = (
+                                self.ambulance_model.names[
+                                    class_id
+                                ]
+                            )
+                        except Exception:
+                            class_name = "ambulance"
+
+                        detections.append(
+                            {
+                                "event_type": "emergency",
+                                "class_name": "ambulance",
+                                "class_id": class_id,
+                                "confidence": round(
+                                    confidence,
+                                    4
+                                ),
+                                "bbox": [
+                                    int(x1),
+                                    int(y1),
+                                    int(x2),
+                                    int(y2),
+                                ],
+                                "model": "indian_ambulance",
+                            }
+                        )
 
         return detections
 
-    # ========================================================
-    # TRAFFIC
-    # ========================================================
+    # ============================================================
+    # DRAW DETECTIONS
+    # ============================================================
 
-    def count_traffic(
-        self,
-        detections
-    ):
+    def draw_detections(self, frame, detections):
+
+        """
+        Draw AI detections on the live video frame.
+
+        Important:
+        - This only draws detections in memory.
+        - It does NOT save frames.
+        - It does NOT create an output video.
+        - It does NOT upload frames.
+        """
+
+        if frame is None:
+            return frame
+
+        if not detections:
+            return frame
+
+        for detection in detections:
+
+            bbox = detection.get("bbox")
+
+            if not bbox or len(bbox) != 4:
+                continue
+
+            x1, y1, x2, y2 = bbox
+
+            x1 = int(x1)
+            y1 = int(y1)
+            x2 = int(x2)
+            y2 = int(y2)
+
+            event_type = detection.get(
+                "event_type",
+                "event"
+            )
+
+            class_name = detection.get(
+                "class_name",
+                event_type
+            )
+
+            confidence = float(
+                detection.get(
+                    "confidence",
+                    0
+                )
+            )
+
+            model_name = detection.get(
+                "model",
+                "ai"
+            )
+
+            # ====================================================
+            # DETECTION COLORS
+            # ====================================================
+
+            if event_type == "emergency":
+
+                # RED = emergency
+                color = (0, 0, 255)
+
+            elif event_type == "pothole":
+
+                # MAGENTA = pothole
+                color = (255, 0, 255)
+
+            elif event_type == "road_damage":
+
+                # ORANGE = road damage
+                color = (0, 165, 255)
+
+            elif event_type == "road_infrastructure":
+
+                # BLUE = infrastructure
+                color = (255, 165, 0)
+
+            elif event_type == "traffic":
+
+                # GREEN = traffic
+                color = (0, 255, 0)
+
+            else:
+
+                # WHITE = unknown/general event
+                color = (255, 255, 255)
+
+            # ====================================================
+            # DRAW BOUNDING BOX
+            # ====================================================
+
+            cv2.rectangle(
+                frame,
+                (x1, y1),
+                (x2, y2),
+                color,
+                2,
+            )
+
+            # ====================================================
+            # LABEL
+            # ====================================================
+
+            if event_type == "emergency":
+
+                label = (
+                    f"EMERGENCY: "
+                    f"{class_name} "
+                    f"{confidence:.2f}"
+                )
+
+            else:
+
+                label = (
+                    f"{class_name} "
+                    f"{confidence:.2f}"
+                )
+
+            # ====================================================
+            # LABEL SIZE
+            # ====================================================
+
+            (
+                (text_width, text_height),
+                baseline,
+            ) = cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                2,
+            )
+
+            # Make sure label does not go outside frame
+            label_top = max(
+                0,
+                y1 - text_height - baseline - 6
+            )
+
+            label_bottom = max(
+                text_height + baseline + 6,
+                y1
+            )
+
+            label_right = min(
+                frame.shape[1] - 1,
+                x1 + text_width + 8
+            )
+
+            # ====================================================
+            # LABEL BACKGROUND
+            # ====================================================
+
+            cv2.rectangle(
+                frame,
+                (x1, label_top),
+                (label_right, label_bottom),
+                color,
+                -1,
+            )
+
+            # ====================================================
+            # LABEL TEXT
+            # ====================================================
+
+            cv2.putText(
+                frame,
+                label,
+                (
+                    x1 + 4,
+                    label_bottom - 5,
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+            # ====================================================
+            # MODEL NAME
+            # ====================================================
+
+            model_text = f"[{model_name}]"
+
+            model_y = min(
+                frame.shape[0] - 5,
+                y2 + 18
+            )
+
+            cv2.putText(
+                frame,
+                model_text,
+                (x1, model_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
+
+        return frame
+
+    # ============================================================
+    # TRAFFIC COUNT
+    # ============================================================
+
+    def count_traffic(self, detections):
 
         result = {
             "vehicle_count": 0,
@@ -358,9 +573,7 @@ class RoadDetector:
 
         for detection in detections:
 
-            class_name = detection.get(
-                "class_name"
-            )
+            class_name = detection["class_name"]
 
             if class_name == "HMV":
 
@@ -372,9 +585,7 @@ class RoadDetector:
 
             elif class_name == "Pedestrian":
 
-                result[
-                    "pedestrian_count"
-                ] += 1
+                result["pedestrian_count"] += 1
 
         result["vehicle_count"] = (
             result["hmv_count"]
@@ -383,15 +594,15 @@ class RoadDetector:
 
         return result
 
-    # ========================================================
+    # ============================================================
     # TRAFFIC INDEX
-    # ========================================================
+    # ============================================================
 
     def calculate_traffic_index(
         self,
         detections,
-        frame_width=640,
-        frame_height=640,
+        frame_width,
+        frame_height
     ):
 
         vehicle_count = 0
@@ -399,14 +610,9 @@ class RoadDetector:
 
         for detection in detections:
 
-            class_name = detection.get(
-                "class_name"
-            )
+            class_name = detection["class_name"]
 
-            if class_name in {
-                "HMV",
-                "LMV",
-            }:
+            if class_name in {"HMV", "LMV"}:
 
                 vehicle_count += 1
 
@@ -432,166 +638,22 @@ class RoadDetector:
             100
         )
 
-    # ========================================================
+    # ============================================================
     # EVENT HELPERS
-    # ========================================================
+    # ============================================================
 
-    def is_road_event(
-        self,
-        detection
-    ):
+    def is_road_event(self, detection):
 
-        return detection.get(
-            "event_type"
-        ) in {
+        return detection["event_type"] in {
             "road_damage",
             "pothole",
             "road_infrastructure",
         }
 
-    def is_traffic_event(
-        self,
-        detection
-    ):
+    def is_traffic_event(self, detection):
 
-        return (
-            detection.get(
-                "event_type"
-            )
-            == "traffic"
-        )
+        return detection["event_type"] == "traffic"
 
-    def is_emergency_event(
-        self,
-        detection
-    ):
+    def is_emergency_event(self, detection):
 
-        return (
-            detection.get(
-                "event_type"
-            )
-            == "emergency"
-        )
-
-    # ========================================================
-    # DRAW
-    # ========================================================
-
-    def draw_detections(
-        self,
-        frame,
-        detections
-    ):
-
-        if frame is None:
-            return frame
-
-        for detection in detections:
-
-            bbox = detection.get(
-                "bbox"
-            )
-
-            if not bbox:
-                continue
-
-            x1, y1, x2, y2 = bbox
-
-            event_type = detection.get(
-                "event_type",
-                "unknown"
-            )
-
-            class_name = detection.get(
-                "class_name",
-                "unknown"
-            )
-
-            confidence = float(
-                detection.get(
-                    "confidence",
-                    0
-                )
-            )
-
-            if event_type == "emergency":
-
-                color = (
-                    0,
-                    0,
-                    255
-                )
-
-                label = (
-                    f"EMERGENCY: "
-                    f"{class_name} "
-                    f"{confidence:.0%}"
-                )
-
-            elif event_type in {
-                "pothole",
-                "road_damage",
-            }:
-
-                color = (
-                    0,
-                    165,
-                    255
-                )
-
-                label = (
-                    f"{class_name} "
-                    f"{confidence:.0%}"
-                )
-
-            elif event_type == "traffic":
-
-                color = (
-                    255,
-                    200,
-                    0
-                )
-
-                label = (
-                    f"{class_name} "
-                    f"{confidence:.0%}"
-                )
-
-            else:
-
-                color = (
-                    0,
-                    255,
-                    0
-                )
-
-                label = (
-                    f"{class_name} "
-                    f"{confidence:.0%}"
-                )
-
-            cv2.rectangle(
-                frame,
-                (x1, y1),
-                (x2, y2),
-                color,
-                2
-            )
-
-            cv2.putText(
-                frame,
-                label,
-                (
-                    x1,
-                    max(
-                        y1 - 8,
-                        20
-                    )
-                ),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                color,
-                2
-            )
-
-        return frame
+        return detection["event_type"] == "emergency"
