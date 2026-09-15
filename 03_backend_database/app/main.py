@@ -1,52 +1,43 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from database import Base, engine
-from routes import router
-from fastapi.middleware.cors import CORSMiddleware
-
-Base.metadata.create_all(bind=engine)
-
-
-app = FastAPI(
-    title="CODYSSEY Urban Intelligence Platform",
-    description="AI-powered mobile urban intelligence platform",
-    version="1.0.0"
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from .auth import router as auth_router
+from .config import Settings
+from .database import Base, create_database
+from .routes import router, health
+from .models import ISSUE_LOCATION_INDEX
 
 
-app.include_router(router)
+def create_app(settings=None):
+    settings = settings or Settings.from_environment()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        settings.ensure_operator_password()
+        engine, session_factory = create_database(settings.database_url)
+        Base.metadata.create_all(engine)
+        # create_all does not add a new index to an already-existing table.
+        ISSUE_LOCATION_INDEX.create(bind=engine, checkfirst=True)
+        app.state.engine = engine
+        app.state.session_factory = session_factory
+        yield
+        engine.dispose()
+
+    application = FastAPI(title="CODYSSEY Urban Intelligence", version="2.0.0", lifespan=lifespan)
+    application.state.settings = settings
+    application.state.sessions = {}
+    application.state.login_failures = {}
+    application.add_middleware(CORSMiddleware, allow_origins=list(settings.allowed_origins), allow_credentials=True,
+                               allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type"])
+    application.include_router(router)
+    application.include_router(auth_router)
+    application.add_api_route("/health", health, methods=["GET"], include_in_schema=False)
+
+    @application.get("/")
+    def root():
+        return {"system": "CODYSSEY", "status": "online", "contract_version": "2.0", "docs": "/docs"}
+
+    return application
 
 
-@app.get("/")
-def root():
-    return {
-        "system": "CODYSSEY",
-        "platform": "Mobile Urban Intelligence",
-        "status": "online"
-    }
-
-
-@app.get("/health")
-def health():
-    return {
-        "status": "healthy"
-    }
+app = create_app()

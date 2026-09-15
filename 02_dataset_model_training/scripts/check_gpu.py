@@ -1,21 +1,21 @@
-import torch
+"""Report the available PyTorch inference/training device."""
 
-print("=" * 50)
-print("GPU / PyTorch Check")
-print("=" * 50)
+import argparse
 
-print(f"PyTorch version : {torch.__version__}")
-print(f"CUDA available  : {torch.cuda.is_available()}")
 
-if torch.cuda.is_available():
-    print(f"GPU count       : {torch.cuda.device_count()}")
+def main():
+    argparse.ArgumentParser(description=__doc__).parse_args()
+    import torch
 
-    for i in range(torch.cuda.device_count()):
-        print(f"GPU {i}          : {torch.cuda.get_device_name(i)}")
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        for index in range(torch.cuda.device_count()):
+            print(f"GPU {index}: {torch.cuda.get_device_name(index)}")
+        print(f"CUDA version: {torch.version.cuda}")
+    else:
+        print("Inference and training will use CPU.")
 
-    print(f"CUDA version    : {torch.version.cuda}")
-else:
-    print("\nWARNING: CUDA GPU is NOT available.")
-    print("Training will use CPU, which is not recommended.")
 
-print("=" * 50)
+if __name__ == "__main__":
+    main()

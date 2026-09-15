@@ -1,47 +1,59 @@
+"""Evaluate a pothole checkpoint and write measured results to a model report."""
+
+import argparse
+import hashlib
 from pathlib import Path
-from ultralytics import YOLO
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+from config import DATA_YAML, RUNS_DIR, TRAINED_MODEL, resolve_dataset, write_runtime_config
 
-MODEL_PATH = (
-    BASE_DIR /
-    "training" /
-    "runs" /
-    "pothole_yolo11s" /
-    "weights" /
-    "best.pt"
-)
 
-DATA_YAML = BASE_DIR / "training" / "data.yaml"
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", type=Path, default=TRAINED_MODEL)
+    parser.add_argument("--data", type=Path, default=DATA_YAML)
+    parser.add_argument("--split", choices=["val", "test"], default="test")
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--report", type=Path, default=RUNS_DIR / "model-report.md")
+    args = parser.parse_args()
+    if args.imgsz < 32:
+        parser.error("imgsz must be at least 32")
+    try:
+        data = resolve_dataset(args.data, splits=(args.split,))
+        if not args.model.is_file():
+            raise FileNotFoundError(f"Trained weights not found: {args.model}. Use --model to select a checkpoint.")
+    except (OSError, ValueError) as exc:
+        parser.exit(1, f"Validation inputs unavailable: {exc}\n")
+    if args.check:
+        print(f"Validation inputs ready: {data['path']}")
+        return
+    import torch
+    from ultralytics import YOLO
 
-print("=" * 60)
-print("POTHOLE MODEL VALIDATION")
-print("=" * 60)
+    model = YOLO(str(args.model.resolve()))
+    if model.names != {0: "pothole"}:
+        parser.exit(1, f"Expected class 0=pothole; found {model.names}\n")
+    metrics = model.val(
+        data=write_runtime_config(data), imgsz=args.imgsz, split=args.split,
+        device=0 if torch.cuda.is_available() else "cpu",
+        project=str(RUNS_DIR), name="validation",
+    )
+    print(f"mAP50: {metrics.box.map50:.4f}; mAP50-95: {metrics.box.map:.4f}")
+    print(f"Precision: {metrics.box.mp:.4f}; Recall: {metrics.box.mr:.4f}")
+    checksum = hashlib.sha256(args.model.read_bytes()).hexdigest()
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        f"# Pothole model evaluation\n\nModel: `{args.model.resolve()}`\n\nSHA-256: `{checksum}`\n\n"
+        f"Dataset: `{data['path']}`; split: {args.split}; image size: {args.imgsz}.\n\n"
+        f"| Metric | Measured value |\n| --- | --- |\n| Precision | {metrics.box.mp:.4f} |\n"
+        f"| Recall | {metrics.box.mr:.4f} |\n| mAP50 | {metrics.box.map50:.4f} |\n| mAP50-95 | {metrics.box.map:.4f} |\n\n"
+        f"Timing (ms/image, Ultralytics): `{metrics.speed}`\n\n"
+        "Precision and recall are reported by Ultralytics; select an operating threshold using a separate error review. "
+        "Record dataset provenance and split manifest, unseen-video results, and shadow/puddle/patch mistakes before model handoff.\n",
+        encoding="utf-8",
+    )
+    print(f"Evaluation report: {args.report}")
 
-if not MODEL_PATH.exists():
-    print("ERROR: best.pt was not found.")
-    print(f"Expected: {MODEL_PATH}")
-    raise SystemExit(1)
 
-model = YOLO(str(MODEL_PATH))
-
-print(f"Model   : {MODEL_PATH}")
-print(f"Dataset : {DATA_YAML}")
-
-metrics = model.val(
-    data=str(DATA_YAML),
-    imgsz=960,
-    split="test",
-    device=0
-)
-
-print("\n" + "=" * 60)
-print("VALIDATION RESULTS")
-print("=" * 60)
-
-print(f"mAP50      : {metrics.box.map50:.4f}")
-print(f"mAP50-95   : {metrics.box.map:.4f}")
-print(f"Precision  : {metrics.box.mp:.4f}")
-print(f"Recall     : {metrics.box.mr:.4f}")
-
-print("=" * 60)
+if __name__ == "__main__":
+    main()

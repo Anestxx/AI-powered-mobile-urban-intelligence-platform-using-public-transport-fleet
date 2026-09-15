@@ -1,199 +1,79 @@
-import time
-import uuid
-from collections import defaultdict
+from dataclasses import dataclass, field
+import math
+from uuid import uuid4
+
+
+def overlap(first, second):
+    left, top = max(first[0], second[0]), max(first[1], second[1])
+    right, bottom = min(first[2], second[2]), min(first[3], second[3])
+    intersection = max(0, right - left) * max(0, bottom - top)
+    union = (first[2] - first[0]) * (first[3] - first[1]) + (second[2] - second[0]) * (second[3] - second[1]) - intersection
+    return intersection / union if union > 0 else 0
+
+
+@dataclass
+class Track:
+    bbox: list
+    event_id: str = field(default_factory=lambda: str(uuid4()))
+    confidences: list = field(default_factory=list)
+    missed: int = 0
+    alerted: bool = False
 
 
 class AlertManager:
-
-    EVENT_SEVERITY = {
-        "road_damage": "high",
-        "pothole": "high",
-        "road_infrastructure": "medium",
-        "traffic": "low",
-        "emergency": "critical",
-        "unsafe_behaviour": "high",
-    }
-
-    EVENT_PRIORITY = {
-        "road_damage": 75,
-        "pothole": 85,
-        "road_infrastructure": 55,
-        "traffic": 35,
-        "emergency": 100,
-        "unsafe_behaviour": 70,
-    }
-
-    def __init__(
-        self,
-        required_detections=2,
-        cooldown_seconds=8,
-        persistence_window=5
-    ):
-
+    """Associate boxes across sampled frames; emit once per continuously visible track."""
+    def __init__(self, confidence_threshold=.7, required_detections=3, max_missing_frames=5, cooldown_seconds=5, iou_threshold=.2):
+        if not 0 <= confidence_threshold <= 1 or required_detections < 1 or max_missing_frames < 0 or cooldown_seconds < 0 or not 0 < iou_threshold <= 1:
+            raise ValueError("Invalid tracking configuration")
+        self.confidence_threshold = confidence_threshold
         self.required_detections = required_detections
+        self.max_missing_frames = max_missing_frames
         self.cooldown_seconds = cooldown_seconds
-        self.persistence_window = persistence_window
+        self.iou_threshold = iou_threshold
+        self.tracks = []
+        self.recent_alerts = []
+        self.last_frame_id = -1
 
-        self.history = defaultdict(list)
-        self.last_alert_times = {}
-
-        self.total_alerts = 0
-
-    def calculate_priority(
-        self,
-        event_type,
-        confidence
-    ):
-
-        base = self.EVENT_PRIORITY.get(
-            event_type,
-            30
-        )
-
-        score = base + (confidence * 25)
-
-        return min(
-            round(score, 1),
-            100
-        )
-
-    def process_detection(
-        self,
-        detection
-    ):
-
-        event_type = detection.get("event_type")
-        class_name = detection.get("class_name")
-
-        confidence = float(
-            detection.get("confidence", 0)
-        )
-
-        if not event_type or not class_name:
-            return None
-
-        # Basic confidence gate
-        if event_type == "pothole" and confidence < 0.20:
-            return None
-
-        if event_type == "traffic" and confidence < 0.35:
-            return None
-
-        if event_type == "road_damage" and confidence < 0.30:
-            return None
-
-        key = event_type + ":" + class_name
-
-        now = time.time()
-
-        self.history[key].append({
-            "time": now,
-            "confidence": confidence,
-            "bbox": detection.get("bbox"),
-            "model": detection.get("model")
-        })
-
-        # Keep only recent observations
-        self.history[key] = [
-            item
-            for item in self.history[key]
-            if now - item["time"]
-            <= self.persistence_window
-        ]
-
-        observations = self.history[key]
-
-        # Temporal validation
-        if len(observations) < self.required_detections:
-            return None
-
-        last_alert = self.last_alert_times.get(
-            key,
-            0
-        )
-
-        if now - last_alert < self.cooldown_seconds:
-            return None
-
-        recent = observations[
-            -self.required_detections:
-        ]
-
-        avg_confidence = (
-            sum(
-                item["confidence"]
-                for item in recent
-            )
-            / len(recent)
-        )
-
-        best_observation = max(
-            recent,
-            key=lambda x: x["confidence"]
-        )
-
-        severity = self.EVENT_SEVERITY.get(
-            event_type,
-            "medium"
-        )
-
-        priority = self.calculate_priority(
-            event_type,
-            avg_confidence
-        )
-
-        alert = {
-            "alert_id": str(uuid.uuid4()),
-
-            "event_type": event_type,
-
-            "class_name": class_name,
-
-            "confidence": round(
-                avg_confidence,
-                3
-            ),
-
-            "severity": severity,
-
-            "priority_score": priority,
-
-            "timestamp": time.strftime(
-                "%Y-%m-%dT%H:%M:%S"
-            ),
-
-            "bbox": best_observation["bbox"],
-
-            "source": "public_bus_camera",
-
-            "status": "new",
-
-            "validation": {
-                "required_observations":
-                    self.required_detections,
-
-                "observed_observations":
-                    len(recent),
-
-                "validation_method":
-                    "temporal_persistence"
-            }
-        }
-
-        self.last_alert_times[key] = now
-
-        self.total_alerts += 1
-
-        return alert
-
-    def get_tracking_status(self):
-
-        result = {}
-
-        for key, observations in self.history.items():
-
-            result[key] = {
-                "observations": len(observations)
-            }
-
-        return result
+    def process_frame(self, detections, frame_id, video_time, timestamp):
+        if frame_id <= self.last_frame_id:
+            return []
+        self.last_frame_id = frame_id
+        self.recent_alerts = [(bbox, expiry) for bbox, expiry in self.recent_alerts if expiry > video_time]
+        unmatched = set(range(len(self.tracks)))
+        seen = []
+        alerts = []
+        for detection in sorted(detections, key=lambda value: value.get("confidence", 0), reverse=True):
+            confidence = detection.get("confidence", 0)
+            bbox = detection.get("bbox")
+            if detection.get("event_type") != "pothole" or not isinstance(confidence, (int, float)) or not math.isfinite(confidence) or not self.confidence_threshold <= confidence <= 1:
+                continue
+            if not isinstance(bbox, list) or len(bbox) != 4 or not all(isinstance(x, (int, float)) and math.isfinite(x) and x >= 0 for x in bbox) or bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+                continue
+            # Suppress near-identical boxes in a single frame before association.
+            if any(overlap(bbox, other.bbox) >= .85 for other in seen):
+                continue
+            matches = [(overlap(bbox, self.tracks[index].bbox), index) for index in unmatched]
+            score, index = max(matches, default=(0, -1))
+            if score >= self.iou_threshold:
+                unmatched.remove(index)
+                track = self.tracks[index]
+            else:
+                track = Track(list(bbox))
+                self.tracks.append(track)
+            track.bbox = list(bbox)
+            track.missed = 0
+            track.confidences = (track.confidences + [confidence])[-self.required_detections:]
+            seen.append(track)
+            if track.alerted or len(track.confidences) < self.required_detections:
+                continue
+            if any(overlap(track.bbox, previous) >= self.iou_threshold for previous, _ in self.recent_alerts):
+                continue
+            track.alerted = True
+            self.recent_alerts.append((list(track.bbox), video_time + self.cooldown_seconds))
+            alerts.append({"event_id": track.event_id, "event_type": "pothole", "confidence": round(sum(track.confidences) / len(track.confidences), 6),
+                           "bbox": list(track.bbox), "timestamp": timestamp})
+        for index in unmatched:
+            self.tracks[index].missed += 1
+            self.tracks[index].confidences.clear()
+        self.tracks = [track for track in self.tracks if track.missed <= self.max_missing_frames]
+        return alerts
