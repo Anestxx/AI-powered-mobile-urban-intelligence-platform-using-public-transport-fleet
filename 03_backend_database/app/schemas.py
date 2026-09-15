@@ -27,6 +27,8 @@ class AlertCreate(BaseModel):
 
     bbox: Optional[str] = None
 
+    cluster_id: Optional[str] = None
+
 
 class AlertResponse(AlertCreate):
 

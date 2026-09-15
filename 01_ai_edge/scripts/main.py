@@ -49,6 +49,9 @@ from multi_bus_validator import (
     MultiBusValidator
 )
 
+from spatial_cluster import (
+    SpatialClusterManager
+)
 
 # ============================================================
 # PATHS
@@ -119,7 +122,8 @@ def send_alert(
     alert,
     gps,
     priority_engine,
-    multi_bus_validator
+    multi_bus_validator,
+    spatial_cluster_manager
 ):
 
     try:
@@ -181,6 +185,25 @@ def send_alert(
                 "bus_count",
                 1
             )
+        )
+
+        # ----------------------------------------------------
+        # SPATIAL CLUSTERING
+        # ----------------------------------------------------
+
+        clustered_event = (
+            spatial_cluster_manager.add_event(
+                event
+            )
+        )
+
+        cluster_info = clustered_event.get(
+            "cluster",
+            {}
+        )
+
+        cluster_id = cluster_info.get(
+            "cluster_id"
         )
 
         # ----------------------------------------------------
@@ -262,6 +285,8 @@ def send_alert(
                     "bbox"
                 )
             ),
+
+            "cluster_id": cluster_id
         }
 
         # ----------------------------------------------------
@@ -893,7 +918,8 @@ def main():
                     traffic_alert,
                     gps,
                     priority_engine,
-                    multi_bus_validator
+                    multi_bus_validator,
+                    spatial_cluster_manager
                 )
 
                 total_alerts += 1
@@ -962,7 +988,8 @@ def main():
                         emergency_alert,
                         gps,
                         priority_engine,
-                        multi_bus_validator
+                        multi_bus_validator,
+                        spatial_cluster_manager
                     )
 
                     emergency_status = {
@@ -1024,7 +1051,8 @@ def main():
                         alert,
                         gps,
                         priority_engine,
-                        multi_bus_validator
+                        multi_bus_validator,
+                        spatial_cluster_manager
                     )
 
                     total_alerts += 1
@@ -1219,7 +1247,8 @@ def main():
                     emergency_alert,
                     gps,
                     priority_engine,
-                    multi_bus_validator
+                    multi_bus_validator,
+                    spatial_cluster_manager
                 )
 
                 emergency_status = {

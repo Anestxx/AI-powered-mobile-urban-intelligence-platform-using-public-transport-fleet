@@ -28,6 +28,8 @@ class Alert(Base):
 
     bbox = Column(String, nullable=True)
 
+    cluster_id = Column(String, nullable=True)
+
     status = Column(
         String,
         default="new"
