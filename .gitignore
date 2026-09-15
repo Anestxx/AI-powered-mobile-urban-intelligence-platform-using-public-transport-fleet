@@ -1,4 +1,5 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
 
@@ -7,6 +8,22 @@ extracted_frames/
 alerts/
 
 .env
+.env.*
+!.env.example
+operator-password.txt
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Local editor and assistant configuration
+.claude/
+.codex/
+.agents/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 
 # Frontend
 04_dashboard_frontend/node_modules/
@@ -18,14 +35,18 @@ alerts/
 # Training dataset
 02_dataset_model_training/dataset/
 02_dataset_model_training/fast_dataset/
+02_dataset_model_training/review_sets/
 
 # Training outputs
 02_dataset_model_training/training/runs/
 
-# Model weights
+# Keep curated project checkpoints; ignore generated training weights elsewhere
 *.pt
-# Training dataset
-02_dataset_model_training/dataset/
-02_dataset_model_training/training/runs/
-*.pt
+!01_ai_edge/models/*.pt
+
+# Local backups and generated files
 *.zip
+.pytest_cache/
+*.log
+*.egg-info/
+build/

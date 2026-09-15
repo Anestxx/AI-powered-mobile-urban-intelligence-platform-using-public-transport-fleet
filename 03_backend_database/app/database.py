@@ -1,34 +1,33 @@
 from pathlib import Path
-
-from sqlalchemy import create_engine
+from fastapi import Request
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATABASE_DIR = BASE_DIR / "database"
-
-DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-
-DATABASE_URL = f"sqlite:///{DATABASE_DIR / 'urban_sensing.db'}"
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
-
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
+from sqlalchemy.pool import StaticPool
 
 Base = declarative_base()
 
 
-def get_db():
-    db = SessionLocal()
+def create_database(url):
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite":
+        raise ValueError("This prototype supports SQLite databases")
+    memory = parsed.database in (None, "", ":memory:")
+    if not memory:
+        Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)
+    options = {"poolclass": StaticPool} if memory else {}
+    engine = create_engine(url, connect_args={"check_same_thread": False, "timeout": 15}, **options)
 
-    try:
-        yield db
-    finally:
-        db.close()
+    @event.listens_for(engine, "connect")
+    def configure_sqlite(connection, _):
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=15000")
+        cursor.close()
+
+    return engine, sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def get_db(request: Request):
+    with request.app.state.session_factory() as session:
+        yield session

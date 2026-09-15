@@ -1,27 +1,46 @@
-import cv2
-import os
+"""Explicitly extract sampled video frames for dataset preparation."""
 
-VIDEO_PATH = "videos/road_test.mp4"
-OUTPUT_DIR = "extracted_frames"
-FRAME_INTERVAL = 15
+import argparse
+from pathlib import Path
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+from paths import EDGE_DIR, VIDEO_PATH, existing_file
 
-cap = cv2.VideoCapture(VIDEO_PATH)
-frame_count = 0
-saved_count = 0
 
-while True:
-    success, frame = cap.read()
-    if not success:
-        break
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--video", default=VIDEO_PATH)
+    parser.add_argument("--output", type=Path, default=EDGE_DIR / "extracted_frames")
+    parser.add_argument("--interval", type=int, default=15)
+    parser.add_argument("--max-frames", type=int, default=0, help="Maximum saved frames; 0 means unlimited")
+    args = parser.parse_args()
+    if args.interval < 1 or args.max_frames < 0:
+        parser.error("interval must be positive and max-frames must be nonnegative")
+    import cv2
 
-    if frame_count % FRAME_INTERVAL == 0:
-        filename = os.path.join(OUTPUT_DIR, f"frame_{saved_count:04d}.jpg")
-        cv2.imwrite(filename, frame)
-        saved_count += 1
+    cap = cv2.VideoCapture(str(existing_file(args.video)))
+    read_count = saved = 0
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {args.video}")
+        args.output.mkdir(parents=True, exist_ok=True)
+        while not args.max_frames or saved < args.max_frames:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if read_count % args.interval == 0:
+                path = args.output / f"frame_{read_count:06d}.jpg"
+                if path.exists():
+                    raise FileExistsError(f"Choose an empty output folder; file already exists: {path}")
+                if not cv2.imwrite(str(path), frame):
+                    raise OSError(f"Could not write: {path}")
+                saved += 1
+            read_count += 1
+        if not read_count:
+            raise RuntimeError("Video contains no readable frames.")
+    finally:
+        cap.release()
+    print(f"Extracted {saved} frames to {args.output}")
 
-    frame_count += 1
 
-cap.release()
-print(f"Extracted {saved_count} frames to {OUTPUT_DIR}/")
+if __name__ == "__main__":
+    main()

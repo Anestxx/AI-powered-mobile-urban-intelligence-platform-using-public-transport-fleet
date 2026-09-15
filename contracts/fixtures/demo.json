@@ -1,0 +1,22 @@
+{
+  "contract_version": "2.0",
+  "observations": [
+    {"event_id":"11111111-1111-4111-8111-111111111111","event_type":"pothole","bus_id":"BUS_01","confidence":0.91,"latitude":12.9716,"longitude":77.5946,"timestamp":"2026-09-13T10:30:00Z","gps_timestamp":"2026-09-13T10:30:00Z","location_source":"simulated","bbox":[100,200,200,280],"model_version":"fixture_v1"},
+    {"event_id":"22222222-2222-4222-8222-222222222222","event_type":"pothole","bus_id":"BUS_02","confidence":0.88,"latitude":12.97165,"longitude":77.59465,"timestamp":"2026-09-13T10:31:00Z","gps_timestamp":"2026-09-13T10:31:00Z","location_source":"simulated","bbox":[110,200,210,280],"model_version":"fixture_v1"},
+    {"event_id":"33333333-3333-4333-8333-333333333333","event_type":"pothole","bus_id":"BUS_03","confidence":0.85,"latitude":12.9816,"longitude":77.6146,"timestamp":"2026-09-13T10:32:00Z","gps_timestamp":"2026-09-13T10:32:00Z","location_source":"simulated","bbox":[120,210,220,290],"model_version":"fixture_v1"}
+  ],
+  "issues": {
+    "items": [
+      {"issue_id":"ISSUE_DEMO_NEARBY","event_type":"pothole","latitude":12.9716,"longitude":77.5946,"location_source":"simulated","severity":"unknown","priority":"medium","priority_reason":"Reported by 2 distinct buses","priority_rule_version":"demo_v1","report_count":2,"distinct_bus_count":2,"status":"open","first_seen":"2026-09-13T10:30:00.000000Z","last_seen":"2026-09-13T10:31:00.000000Z"},
+      {"issue_id":"ISSUE_DEMO_DISTANT","event_type":"pothole","latitude":12.9816,"longitude":77.6146,"location_source":"simulated","severity":"unknown","priority":"low","priority_reason":"Reported by 1 distinct bus","priority_rule_version":"demo_v1","report_count":1,"distinct_bus_count":1,"status":"resolved","first_seen":"2026-09-13T10:32:00.000000Z","last_seen":"2026-09-13T10:32:00.000000Z"}
+    ],
+    "total":2,"page":1,"page_size":20
+  },
+  "buses": {"items":[
+    {"bus_id":"BUS_01","latitude":12.9716,"longitude":77.5946,"location_source":"simulated","timestamp":"2026-09-13T10:32:00.000000Z","last_seen":"2026-09-13T10:32:00.000000Z","camera_status":"online","ai_status":"online","online":true},
+    {"bus_id":"BUS_02","latitude":null,"longitude":null,"location_source":null,"timestamp":"2026-09-13T09:00:00.000000Z","last_seen":"2026-09-13T09:00:00.000000Z","camera_status":"offline","ai_status":"offline","online":false}
+  ],"total":2},
+  "empty":{"items":[],"total":0,"page":1,"page_size":20},
+  "invalid_observation":{"event_type":"pothole","confidence":1.5,"latitude":100},
+  "paginated":{"items":[],"total":2,"page":3,"page_size":1}
+}

@@ -1,59 +1,77 @@
+"""Check pothole image/label pairs and YOLO annotations; optionally verify images."""
+
+import argparse
+from collections import Counter
+import math
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATASET_DIR = BASE_DIR / "dataset"
+DATASET_DIR = Path(__file__).resolve().parents[1] / "dataset"
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-splits = ["train", "val", "test"]
 
-print("=" * 60)
-print("POTHOLE DATASET VALIDATION")
-print("=" * 60)
+def validate_dataset(dataset, verify_images=False, class_count=1):
+    errors = []
+    classes = Counter()
+    total = 0
+    for split in ("train", "val", "test"):
+        image_dir, label_dir = dataset / "images" / split, dataset / "labels" / split
+        if not image_dir.is_dir() or not label_dir.is_dir():
+            errors.append(f"{split}: missing images or labels folder")
+            continue
+        images = [p for p in image_dir.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]
+        labels = list(label_dir.glob("*.txt"))
+        total += len(images)
+        print(f"{split}: {len(images)} images, {len(labels)} labels")
+        if not images:
+            errors.append(f"{split}: no images")
+        image_stems, label_stems = {p.stem for p in images}, {p.stem for p in labels}
+        errors.extend(f"{split}: missing label for {stem}" for stem in sorted(image_stems - label_stems))
+        errors.extend(f"{split}: orphan label {stem}" for stem in sorted(label_stems - image_stems))
+        for label in labels:
+            try:
+                for line_no, line in enumerate(label.read_text(encoding="utf-8").splitlines(), 1):
+                    if not line.strip():
+                        continue  # Empty labels are valid background images.
+                    values = [float(value) for value in line.split()]
+                    if len(values) != 5 or not all(math.isfinite(value) for value in values):
+                        raise ValueError(f"line {line_no}: expected five finite numbers")
+                    cls, x, y, width, height = values
+                    if not cls.is_integer() or not 0 <= cls < class_count:
+                        raise ValueError(f"line {line_no}: invalid class ID {cls}")
+                    if not (0 <= x <= 1 and 0 <= y <= 1 and 0 < width <= 1 and 0 < height <= 1):
+                        raise ValueError(f"line {line_no}: invalid normalized bounding box")
+                    classes[int(cls)] += 1
+            except (OSError, ValueError) as exc:
+                errors.append(f"{label}: {exc}")
+        if verify_images:
+            from PIL import Image
+            for path in images:
+                try:
+                    with Image.open(path) as image:
+                        image.verify()
+                except (OSError, ValueError) as exc:
+                    errors.append(f"{path}: {exc}")
+    if not classes:
+        errors.append("No annotated objects found; import labeled pothole data before training.")
+    print(f"Total: {total} images, {sum(classes.values())} boxes; classes: {dict(sorted(classes.items()))}")
+    return errors
 
-total_images = 0
-total_labels = 0
 
-for split in splits:
-    image_dir = DATASET_DIR / "images" / split
-    label_dir = DATASET_DIR / "labels" / split
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", type=Path, default=DATASET_DIR)
+    parser.add_argument("--verify-images", action="store_true", help="Also check image file integrity")
+    args = parser.parse_args()
+    errors = validate_dataset(args.dataset, args.verify_images)
+    for error in errors[:30]:
+        print(f"ERROR: {error}")
+    if errors:
+        print(f"Dataset check failed: {len(errors)} errors.")
+        return 1
+    print("Dataset check passed.")
+    return 0
 
-    images = [
-        f for f in image_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-    ]
 
-    labels = [
-        f for f in label_dir.iterdir()
-        if f.is_file() and f.suffix.lower() == ".txt"
-    ]
-
-    total_images += len(images)
-    total_labels += len(labels)
-
-    image_names = {f.stem for f in images}
-    label_names = {f.stem for f in labels}
-
-    missing_labels = image_names - label_names
-    missing_images = label_names - image_names
-
-    print(f"\n[{split.upper()}]")
-    print(f"Images : {len(images)}")
-    print(f"Labels : {len(labels)}")
-
-    if missing_labels:
-        print(f"WARNING: {len(missing_labels)} images have no labels")
-
-    if missing_images:
-        print(f"WARNING: {len(missing_images)} labels have no images")
-
-print("\n" + "=" * 60)
-print(f"TOTAL IMAGES : {total_images}")
-print(f"TOTAL LABELS : {total_labels}")
-print("=" * 60)
-
-if total_images == 0:
-    print("\nDataset is currently empty.")
-    print("Add the dataset on the NVIDIA training machine.")
-else:
-    print("\nDataset validation completed.")
+if __name__ == "__main__":
+    raise SystemExit(main())

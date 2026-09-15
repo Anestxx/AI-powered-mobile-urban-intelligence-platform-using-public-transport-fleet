@@ -1,19 +1,20 @@
+"""Create the empty RAD dataset directory structure."""
+
+import argparse
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATASET_DIR = BASE_DIR / "dataset"
+DATASET_DIR = Path(__file__).resolve().parents[1] / "dataset"
 
-folders = [
-    DATASET_DIR / "images/train",
-    DATASET_DIR / "images/val",
-    DATASET_DIR / "images/test",
-    DATASET_DIR / "labels/train",
-    DATASET_DIR / "labels/val",
-    DATASET_DIR / "labels/test",
-]
 
-for folder in folders:
-    folder.mkdir(parents=True, exist_ok=True)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", type=Path, default=DATASET_DIR)
+    args = parser.parse_args()
+    for kind in ("images", "labels"):
+        for split in ("train", "val", "test"):
+            (args.dataset / kind / split).mkdir(parents=True, exist_ok=True)
+    print(f"Dataset folders ready: {args.dataset.resolve()}")
 
-print("Dataset structure verified.")
-print(f"Dataset location: {DATASET_DIR}")
+
+if __name__ == "__main__":
+    main()
