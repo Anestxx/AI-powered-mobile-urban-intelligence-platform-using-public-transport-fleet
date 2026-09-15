@@ -1,4 +1,4 @@
-"""Run pothole inference, simulated GPS, durable observation delivery and bus telemetry."""
+"""Run CODYSSEY pothole inference, simulated GPS, durable observation delivery and bus telemetry."""
 import argparse
 import json
 from datetime import datetime, timedelta, timezone
@@ -12,14 +12,14 @@ from paths import ALERTS_PATH
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", "--video", default=config.VIDEO_PATH, help="Video path or webcam index (e.g. 0)")
-    parser.add_argument("--model", default=config.MODEL_PATH)
-    parser.add_argument("--confidence", type=float, default=config.CONFIDENCE_THRESHOLD)
+    parser.add_argument("--model", default=str(Path(__file__).resolve().parents[1] / "models" / "pothole.pt"))
+    parser.add_argument("--confidence", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=config.IMAGE_SIZE)
     parser.add_argument("--cpu-threads", type=int, default=0, help="Optional measured CPU thread setting; 0 keeps the framework default")
     parser.add_argument("--metrics-file", type=Path, help="Save measured performance counters as JSON")
     parser.add_argument("--save-evidence", action=argparse.BooleanOptionalAction, default=True,
                         help="Save an annotated road image with each alert (default: enabled)")
-    parser.add_argument("--frame-interval", type=int, default=config.FRAME_INTERVAL)
+    parser.add_argument("--frame-interval", type=int, default=1)
     parser.add_argument("--required-detections", type=int, default=config.REQUIRED_DETECTIONS)
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--start-frame", type=int, default=0)
@@ -113,6 +113,13 @@ def main():
     from alert_manager import AlertManager
     from detector import PotholeDetector
     from video_reader import VideoReader
+    import sys
+    from pathlib import Path
+
+    GPS_GIS_DIR = Path(__file__).resolve().parents[2] / "05_gps_gis_prioritization"
+    if str(GPS_GIS_DIR) not in sys.path:
+        sys.path.insert(0, str(GPS_GIS_DIR))
+
     from location_intelligence import GPSSimulator, validate_location
     from playback import PlaybackClock
     from metrics import RunMetrics
@@ -233,7 +240,7 @@ def main():
                         clock = PlaybackClock(video.fps, args.start_frame, time.monotonic())
                         print("Video is playing automatically. Use the player controls to pause or close." if window else "Video is playing automatically. Q: quit; Space: pause/resume.", flush=True)
                     key = wait_key(clock.delay_ms(frame_id, time.monotonic()))
-                    if key == ord("q") or window_closed():
+                    if key == ord("q"):
                         break
                     if key == ord(" "):
                         clock.toggle_pause(time.monotonic())
@@ -246,9 +253,9 @@ def main():
                             cv2.imshow(title, canvas)
                         while True:
                             key = wait_key(50)
-                            if key in (ord(" "), ord("q")) or window_closed():
+                            if key in (ord(" "), ord("q")):
                                 break
-                        if key == ord("q") or window_closed():
+                        if key == ord("q"):
                             break
                         clock.toggle_pause(time.monotonic())
                         if window:
